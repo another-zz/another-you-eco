@@ -21,6 +21,7 @@ from core.collision_pathfinder import CollisionPathfinder
 from core.agent_survival import SurvivalSystem
 from core.pathfinder import SmoothMovement
 from core.event_manager import EventManager, Season
+from core.control_manager import ControlManager
 from ui.modern_hud import ModernHUD
 from ui.thought_bubble import ThoughtBubble
 
@@ -268,11 +269,15 @@ class Game:
         # 玩家
         self.player_agent = self.agents[0]
         self.player_agent.is_player = True
-        self.player_control = False
+        
+        # 控制管理器（v0.9.1修复）
+        self.control_manager = ControlManager(auto_switch_time=30.0)
+        self.control_manager.set_player_agent(self.player_agent)
         
         # 系统
         self.camera = GameCamera(1000, 1000, TILE_SIZE)
         self.camera.set_target(self.player_agent)
+        self.control_manager.set_camera(self.camera)
         self.animation = AnimationManager()
         self.hud = ModernHUD(SCREEN_WIDTH, SCREEN_HEIGHT)
         
@@ -293,21 +298,25 @@ class Game:
         print("  • 无限世界（chunk动态加载）")
         print("  • AI遵守碰撞规则（绕树、不站水）")
         print("  • 清晰内心独白气泡")
+        print("  • 接管控制修复（空格/点击接管，Esc切回，30秒自动）")
         print("=" * 50)
         
     def handle_input(self):
         keys = pygame.key.get_pressed()
+        events = list(pygame.event.get())
         
-        for event in pygame.event.get():
+        for event in events:
             if event.type == pygame.QUIT:
                 self.running = False
                 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
-                    self.player_control = not self.player_control
-                    print(f"🎮 {'玩家' if self.player_control else 'AI'}控制")
+                    # 空格键切换控制
+                    is_player = self.control_manager.toggle_player_mode()
+                    print(f"🎮 {'玩家' if is_player else 'AI'}控制")
                 elif event.key == pygame.K_F12:
                     self.camera.toggle_god_mode()
+                    print(f"👁️ 上帝模式: {'开启' if self.camera.god_mode else '关闭'}")
                 elif event.key == pygame.K_1:
                     self.speed = 1
                 elif event.key == pygame.K_2:
@@ -316,12 +325,25 @@ class Game:
                     self.speed = 5
                     
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 4:
+                if event.button == 1:  # 左键点击AI
+                    clicked_agent = self.control_manager.handle_mouse_click(
+                        event.pos, self.agents, self.camera
+                    )
+                    if clicked_agent:
+                        self.player_agent = clicked_agent
+                        self.control_manager.set_player_agent(clicked_agent)
+                        self.camera.set_target(clicked_agent)
+                        self.control_manager.enter_player_mode()
+                        print(f"🎮 接管控制: {clicked_agent.name}")
+                elif event.button == 4:  # 滚轮上
                     self.camera.zoom_in()
-                elif event.button == 5:
+                elif event.button == 5:  # 滚轮下
                     self.camera.zoom_out()
                     
-        # 上帝模式相机
+        # 处理控制输入（v0.9.1修复）
+        is_player, move_keys = self.control_manager.handle_input(keys, events)
+        
+        # 上帝模式相机移动
         if self.camera.god_mode:
             speed = 15
             if keys[pygame.K_w] or keys[pygame.K_UP]:
@@ -333,12 +355,7 @@ class Game:
             if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
                 self.camera.move(speed, 0)
                 
-        return {
-            'up': keys[pygame.K_w] or keys[pygame.K_UP],
-            'down': keys[pygame.K_s] or keys[pygame.K_DOWN],
-            'left': keys[pygame.K_a] or keys[pygame.K_LEFT],
-            'right': keys[pygame.K_d] or keys[pygame.K_RIGHT],
-        }
+        return is_player, move_keys
         
     def render_world(self, screen):
         """渲染世界（chunk系统 + 高质量瓦片）"""
@@ -386,9 +403,9 @@ class Game:
         
         # 更新AI
         for agent in self.agents:
-            is_player = (agent == self.player_agent and self.player_control)
+            is_this_player = (agent == self.player_agent and is_player)
             agent.update(dt * self.speed, self.chunk_manager, self.animation,
-                        hour, is_player, input_keys)
+                        hour, is_this_player, input_keys)
             
     def render(self):
         self.screen.fill((20, 25, 20))
@@ -410,7 +427,7 @@ class Game:
         game_state = {
             'player': {
                 'name': self.player_agent.name,
-                'status': '🎮 玩家控制' if self.player_control else '🤖 AI自主',
+                'status': '🎮 玩家控制' if self.control_manager.player_mode else '🤖 AI自主',
                 'energy': self.player_agent.survival.energy,
                 'mood': 70,
                 'money': 100,
@@ -424,7 +441,7 @@ class Game:
             'weather': 'Sunny',
             'speed': self.speed,
             'paused': self.paused,
-            'controls': 'WASD:移动 | 空格:切换 | F12:上帝 | 滚轮:缩放',
+            'controls': 'WASD:移动 | 空格:切换 | 点击AI:接管 | 滚轮:缩放 | Esc:切回AI',
             'god_mode': self.camera.god_mode,
             'player_pos': (self.player_agent.x, self.player_agent.y),
             'world_width': 1000,
@@ -437,8 +454,8 @@ class Game:
     async def run(self):
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
-            input_keys = self.handle_input()
-            self.update(dt, input_keys)
+            is_player, input_keys = self.handle_input()
+            self.update(dt, is_player, input_keys)
             self.render()
             await asyncio.sleep(0)
             
