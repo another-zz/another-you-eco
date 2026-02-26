@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ==========================================
-echo  AnotherYou ECO v0.4 - 本地启动器
+echo  AnotherYou ECO v0.6 - AI灵魂版
 echo ==========================================
 echo.
 
@@ -26,23 +26,22 @@ if not exist venv (
 echo.
 echo [3/4] 安装依赖...
 call venv\Scripts\activate
-pip install -q pygame numpy aiohttp
+pip install -q pygame numpy
 
 echo.
 echo [4/4] 启动游戏...
 echo.
 echo 控制说明:
-echo   F12    - 切换上帝视角
-echo   TAB    - 管理员面板
-echo   WASD   - 移动相机
-echo   滚轮   - 缩放
-echo   空格   - 暂停
+echo   空格   - 切换玩家控制/AI自主
+echo   WASD   - 移动
+echo   ESC    - 释放控制（切回AI）
+echo   F12    - 上帝模式
 echo   1/2/3  - 速度
 echo.
 echo 按任意键启动...
 pause >nul
 
-python main_v4.py
+python main.py
 
 echo.
 echo 游戏已退出
