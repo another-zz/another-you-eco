@@ -18,6 +18,8 @@ from core.animation import AnimationManager, EnvironmentEffects
 from core.agent_core import AgentCore
 from core.control_switcher import ControlSwitcher, ControlMode
 from core.pathfinder import AStarPathfinder, SmoothMovement
+from core.event_manager import EventManager, Season
+from core.agent_survival import SurvivalSystem
 from ui.modern_hud import ModernHUD
 
 # 配置
@@ -114,6 +116,10 @@ class GameAgent:
         self.brain = AgentCore(agent_id, name)
         self.brain.x = x
         self.brain.y = y
+        
+        # 生存系统
+        self.survival = SurvivalSystem(self.brain)
+        self.survival.set_home(int(x), int(y))
         
         # 控制切换器
         self.control = ControlSwitcher(self.brain)
