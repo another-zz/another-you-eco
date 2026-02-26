@@ -139,12 +139,12 @@ class LivingWorldVisualizer:
                 elif event.key == pygame.K_3:
                     self.speed = 5
                     
-                # 显示切换
+                # 显示切换 - 使用不同按键避免冲突
                 elif event.key == pygame.K_t:
                     self.show_terrain = not self.show_terrain
-                elif event.key == pygame.K_a:
+                elif event.key == pygame.K_y:
                     self.show_agents = not self.show_agents
-                elif event.key == pygame.K_d:
+                elif event.key == pygame.K_u:
                     self.show_debug = not self.show_debug
                     
             # 鼠标滚轮缩放
@@ -356,9 +356,9 @@ class LivingWorldVisualizer:
         pygame.draw.rect(self.screen, COLORS['ui']['bg'], (0, hint_y, SCREEN_WIDTH, 40))
         
         if self.camera.mode == AdminMode.GOD:
-            hints = "F12:退出上帝 | TAB:面板 | WASD:移动 | 滚轮:缩放 | 点击:选择AI"
+            hints = "F12:退出上帝 | TAB:面板 | WASD:移动相机 | 滚轮:缩放 | 点击:选择AI | T/Y/U:显示切换"
         else:
-            hints = "F12:上帝模式 | WASD:移动你的AI | 滚轮:缩放(有限)"
+            hints = "F12:上帝模式 | WASD:移动你的AI | 滚轮:缩放 | T/Y/U:显示切换"
             
         text = self.font.render(hints, True, (180, 180, 180))
         self.screen.blit(text, (20, hint_y + 10))
