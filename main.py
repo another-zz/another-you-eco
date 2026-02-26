@@ -1,13 +1,13 @@
 """
-AnotherYou ECO - 主版本 v0.6
-AI灵魂版：完全自主 + 无缝切换
+AnotherYou ECO - 主版本 v0.7
+现代UI + 智能AI移动
 """
 
 import pygame
 import asyncio
 import random
 import math
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import sys
 sys.path.insert(0, '/root/.openclaw/workspace/another-you-eco')
@@ -17,7 +17,8 @@ from core.camera import GameCamera
 from core.animation import AnimationManager, EnvironmentEffects
 from core.agent_core import AgentCore
 from core.control_switcher import ControlSwitcher, ControlMode
-from ui.pro_hud import ProfessionalHUD
+from core.pathfinder import AStarPathfinder, SmoothMovement
+from ui.modern_hud import ModernHUD
 
 # 配置
 SCREEN_WIDTH = 1400
@@ -34,6 +35,7 @@ class WorldMap:
         self.height = height
         self.tiles = []
         self.tileset = TilesetManager(TILE_SIZE)
+        self.obstacles = []  # 障碍物列表
         self._generate()
         
     def _generate(self):
@@ -47,10 +49,13 @@ class WorldMap:
                 
                 if dist > min(self.width, self.height) * 0.42:
                     tile_type = 'mountain'
+                    self.obstacles.append((x, y))
                 elif abs(y - center_y) < 4 and random.random() > 0.2:
                     tile_type = 'water'
+                    self.obstacles.append((x, y))
                 elif dist < 10 and random.random() > 0.4:
                     tile_type = 'water'
+                    self.obstacles.append((x, y))
                 elif random.random() < 0.22:
                     tile_type = 'forest'
                 elif random.random() < 0.08:
@@ -94,7 +99,7 @@ class WorldMap:
 
 
 class GameAgent:
-    """游戏AI角色（集成AgentCore）"""
+    """游戏AI角色（带A*路径寻找和平滑移动）"""
     
     SHIRT_COLORS = [
         (220, 80, 80), (80, 120, 220), (80, 180, 80),
@@ -113,9 +118,19 @@ class GameAgent:
         # 控制切换器
         self.control = ControlSwitcher(self.brain)
         
+        # 路径寻找和平滑移动
+        self.pathfinder: AStarPathfinder = None
+        self.movement = SmoothMovement(speed=2.5)
+        self.path_recalc_timer = 0
+        self.target_pos = None
+        
         # 视觉
         self.sprite = self._create_sprite(color_idx)
         self.color_idx = color_idx
+        
+    def set_pathfinder(self, pathfinder: AStarPathfinder):
+        """设置路径寻找器"""
+        self.pathfinder = pathfinder
         
     def _create_sprite(self, color_idx: int):
         """创建角色精灵"""
@@ -141,7 +156,6 @@ class GameAgent:
         # 更新控制切换器
         keys = pygame.key.get_pressed()
         mouse_buttons = pygame.mouse.get_pressed()
-        mouse_pos = pygame.mouse.get_pos()
         
         self.control.update(dt, {
             'up': keys[pygame.K_w] or keys[pygame.K_UP],
@@ -152,8 +166,46 @@ class GameAgent:
         }, {
             'left': mouse_buttons[0],
             'right': mouse_buttons[2],
-        }, mouse_pos)
+        }, pygame.mouse.get_pos())
         
+        if self.control.is_player_control():
+            # 玩家控制模式
+            self._update_player_control(dt, world_map, animation)
+        else:
+            # AI自主模式
+            self._update_ai_control(dt, world_map, animation)
+            
+    def _update_player_control(self, dt: float, world_map: WorldMap, animation: AnimationManager):
+        """玩家控制更新"""
+        move_speed = 4 * dt
+        dx, dy = 0, 0
+        
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            dy = -move_speed
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+            dy = move_speed
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            dx = -move_speed
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            dx = move_speed
+            
+        if dx != 0 or dy != 0:
+            new_x = self.brain.x + dx
+            new_y = self.brain.y + dy
+            
+            if 0 <= new_x < 100 and 0 <= new_y < 100:
+                tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
+                if tile_type not in ['water', 'mountain']:
+                    self.brain.x = new_x
+                    self.brain.y = new_y
+                    self.sprite.update(dt, dx*10, dy*10)
+                    
+                    if random.random() < 0.3:
+                        animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+                        
+    def _update_ai_control(self, dt: float, world_map: WorldMap, animation: AnimationManager):
+        """AI控制更新（使用A*和平滑移动）"""
         # 构建世界上下文
         world_context = {
             'time': '12:00',
@@ -164,102 +216,134 @@ class GameAgent:
             'money': self.brain.money,
         }
         
-        if self.control.is_player_control():
-            # 玩家控制模式
-            move_speed = 4 * dt
-            dx, dy = 0, 0
+        # AI决策
+        result = self.brain.update(dt, world_context)
+        
+        # 如果正在移动，继续平滑移动
+        if self.movement.is_moving:
+            new_x, new_y = self.movement.update(dt)
             
-            if keys[pygame.K_w] or keys[pygame.K_UP]:
-                dy = -move_speed
-            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                dy = move_speed
-            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-                dx = -move_speed
-            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-                dx = move_speed
-                
-            if dx != 0 or dy != 0:
-                new_x = self.brain.x + dx
-                new_y = self.brain.y + dy
-                
-                if 0 <= new_x < 100 and 0 <= new_y < 100:
-                    tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
-                    if tile_type not in ['water', 'mountain']:
-                        self.brain.x = new_x
-                        self.brain.y = new_y
-                        self.sprite.update(dt, dx*10, dy*10)
-                        
-                        # 添加尘土效果
-                        if random.random() < 0.3:
-                            animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+            # 检查边界和障碍物
+            if 0 <= new_x < 100 and 0 <= new_y < 100:
+                tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
+                if tile_type not in ['water', 'mountain']:
+                    dx = new_x - self.brain.x
+                    dy = new_y - self.brain.y
+                    self.brain.x = new_x
+                    self.brain.y = new_y
+                    self.sprite.update(dt, dx*10, dy*10)
+                    
+                    # 添加尘土效果
+                    if self.movement.is_moving and random.random() < 0.2:
+                        animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+                else:
+                    # 遇到障碍，停止移动
+                    self.movement.is_moving = False
         else:
-            # AI自主模式
-            result = self.brain.update(dt, world_context)
+            # 需要新路径
+            self.path_recalc_timer += dt
             
-            # 执行AI决定的移动
-            if result['action']['type'] == 'move':
-                move_dx = result['action'].get('dx', 0) * dt * 2
-                move_dy = result['action'].get('dy', 0) * dt * 2
+            if self.path_recalc_timer > 2.0 and self.pathfinder:  # 每2秒重新规划
+                self.path_recalc_timer = 0
                 
-                new_x = self.brain.x + move_dx
-                new_y = self.brain.y + move_dy
-                
-                if 0 <= new_x < 100 and 0 <= new_y < 100:
-                    tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
-                    if tile_type not in ['water', 'mountain']:
-                        self.brain.x = new_x
-                        self.brain.y = new_y
-                        self.sprite.update(dt, move_dx*10, move_dy*10)
-                        
-                        if random.random() < 0.2:
-                            animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
-            else:
-                self.sprite.update(dt, 0, 0)
-                
+                # 根据AI决策选择目标
+                if result['action']['type'] == 'move':
+                    # 随机选择一个方向走一段距离
+                    dx = result['action'].get('dx', 0) * 10
+                    dy = result['action'].get('dy', 0) * 10
+                    target_x = max(0, min(99, self.brain.x + dx))
+                    target_y = max(0, min(99, self.brain.y + dy))
+                    
+                    # A*寻路
+                    path = self.pathfinder.find_path(
+                        self.brain.x, self.brain.y, target_x, target_y
+                    )
+                    
+                    if path and len(path) > 1:
+                        self.movement.set_path(path, (self.brain.x, self.brain.y))
+                    else:
+                        # 无法找到路径，原地等待
+                        self.sprite.update(dt, 0, 0)
+                else:
+                    self.sprite.update(dt, 0, 0)
+                    
     def render(self, screen: pygame.Surface, camera: GameCamera, is_player: bool = False):
         """渲染角色"""
         sx, sy = camera.world_to_screen(self.brain.x, self.brain.y)
         
         if -50 < sx < screen.get_width() + 50 and -50 < sy < screen.get_height() + 50:
-            # 玩家高亮
+            # 玩家高亮（脉冲效果）
             if is_player:
-                pygame.draw.circle(screen, (255, 215, 0), (sx, sy), 22, 3)
+                pulse = (math.sin(pygame.time.get_ticks() / 200) + 1) / 2
+                radius = 22 + int(pulse * 3)
+                alpha = int(150 + 50 * pulse)
+                pygame.draw.circle(screen, (255, 215, 0, alpha), (sx, sy), radius, 3)
                 
             # 渲染精灵
             self.sprite.render(screen, sx, sy, scale=2.0)
             
-            # 名字
-            font = pygame.font.SysFont('microsoftyahei', 11)
+            # 名字标签（现代风格）
+            font = pygame.font.SysFont('microsoftyahei', 11, bold=True)
             name_text = font.render(self.name, True, (255, 255, 255))
             name_x = sx - name_text.get_width() // 2
+            
+            # 名字背景
+            name_bg = pygame.Rect(name_x - 4, sy - 30, name_text.get_width() + 8, 16)
+            pygame.draw.rect(screen, (0, 0, 0, 150), name_bg, border_radius=4)
             screen.blit(name_text, (name_x, sy - 28))
             
-            # 思考气泡（AI模式）
+            # 思考气泡（AI模式，仅玩家角色）
             if not self.control.is_player_control() and is_player:
                 thought = self.brain.thought_bubble
                 if thought and thought != "...":
-                    bubble_font = pygame.font.SysFont('microsoftyahei', 10)
-                    thought_text = bubble_font.render(thought[:20], True, (200, 200, 255))
-                    bubble_x = sx - thought_text.get_width() // 2
-                    bubble_y = sy - 45
-                    
-                    # 气泡背景
-                    bubble_rect = pygame.Rect(bubble_x - 4, bubble_y - 2, 
-                                            thought_text.get_width() + 8, thought_text.get_height() + 4)
-                    pygame.draw.rect(screen, (40, 40, 60, 200), bubble_rect)
-                    pygame.draw.rect(screen, (100, 100, 150), bubble_rect, 1)
-                    screen.blit(thought_text, (bubble_x, bubble_y))
+                    self._render_thought_bubble(screen, sx, sy - 50, thought)
             
-            # 能量条
-            bar_w = 30
-            bar_h = 4
-            energy_pct = self.brain.energy / 100
-            bar_x = sx - bar_w // 2
-            bar_y = sy + 18
+            # 能量条（现代风格）
+            self._render_energy_bar(screen, sx, sy + 20, self.brain.energy)
             
-            pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_w, bar_h))
-            energy_color = (0, 255, 0) if energy_pct > 0.5 else (255, 200, 0) if energy_pct > 0.3 else (255, 0, 0)
-            pygame.draw.rect(screen, energy_color, (bar_x, bar_y, int(bar_w * energy_pct), bar_h))
+    def _render_thought_bubble(self, screen: pygame.Surface, x: int, y: int, text: str):
+        """渲染思考气泡"""
+        bubble_font = pygame.font.SysFont('microsoftyahei', 10)
+        thought_text = bubble_font.render(text[:25], True, (220, 230, 255))
+        
+        bubble_w = thought_text.get_width() + 12
+        bubble_h = thought_text.get_height() + 8
+        bubble_x = x - bubble_w // 2
+        bubble_y = y
+        
+        # 气泡背景（圆角）
+        bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
+        pygame.draw.rect(screen, (40, 50, 80, 230), bubble_rect, border_radius=8)
+        pygame.draw.rect(screen, (100, 150, 200, 200), bubble_rect, 2, border_radius=8)
+        
+        # 小三角
+        pygame.draw.polygon(screen, (40, 50, 80), [
+            (x, bubble_y + bubble_h + 4),
+            (x - 6, bubble_y + bubble_h - 2),
+            (x + 6, bubble_y + bubble_h - 2)
+        ])
+        
+        screen.blit(thought_text, (bubble_x + 6, bubble_y + 4))
+        
+    def _render_energy_bar(self, screen: pygame.Surface, x: int, y: int, energy: float):
+        """渲染现代能量条"""
+        bar_w = 36
+        bar_h = 5
+        bar_x = x - bar_w // 2
+        
+        # 背景
+        pygame.draw.rect(screen, (40, 40, 50), (bar_x, y, bar_w, bar_h), border_radius=3)
+        
+        # 填充
+        fill_w = int(bar_w * max(0, min(1, energy / 100)))
+        if fill_w > 0:
+            if energy > 60:
+                color = (100, 255, 100)
+            elif energy > 30:
+                color = (255, 220, 80)
+            else:
+                color = (255, 80, 80)
+            pygame.draw.rect(screen, color, (bar_x, y, fill_w, bar_h), border_radius=3)
 
 
 class Game:
@@ -268,19 +352,24 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("AnotherYou ECO v0.6 - AI灵魂版")
+        pygame.display.set_caption("AnotherYou ECO v0.7 - 现代版")
         self.clock = pygame.time.Clock()
         
         # 世界
         self.world = WorldMap(100, 100)
         
+        # 路径寻找器
+        self.pathfinder = AStarPathfinder(100, 100)
+        self.pathfinder.set_obstacles(self.world.obstacles)
+        
         # AI们
         self.agents: Dict[str, GameAgent] = {}
-        for i in range(15):
+        for i in range(20):
             agent = GameAgent(
                 f"agent_{i}", f"AI-{i}",
                 random.randint(40, 60), random.randint(40, 60), i
             )
+            agent.set_pathfinder(self.pathfinder)
             self.agents[agent.id] = agent
             
         # 玩家
@@ -290,7 +379,7 @@ class Game:
         self.camera = GameCamera(100, 100, TILE_SIZE)
         self.camera.set_target(self.player_agent)
         self.animation = AnimationManager()
-        self.hud = ProfessionalHUD(SCREEN_WIDTH, SCREEN_HEIGHT)
+        self.hud = ModernHUD(SCREEN_WIDTH, SCREEN_HEIGHT)
         
         # 时间
         self.game_time = 0
@@ -311,7 +400,6 @@ class Game:
             if event.type == pygame.QUIT:
                 self.running = False
                 
-            # 先给玩家角色处理事件
             if self.player_agent.control.handle_input(event):
                 continue
                 
@@ -319,7 +407,6 @@ class Game:
                 if event.key == pygame.K_F12:
                     self.camera.toggle_god_mode()
                 elif event.key == pygame.K_SPACE:
-                    # 空格键切换控制
                     if self.player_agent.control.mode == ControlMode.AI_MODE:
                         self.player_agent.control.switch_to_player()
                     else:
@@ -372,6 +459,7 @@ class Game:
         
         # 更新动画
         self.animation.update(dt)
+        self.hud.update(dt)
         
         # 更新AI
         for agent in self.agents.values():
@@ -404,6 +492,7 @@ class Game:
                 'energy': self.player_agent.brain.energy,
                 'mood': self.player_agent.brain.mood,
                 'money': self.player_agent.brain.money,
+                'goal': self.player_agent.brain.planner.current_goal or "探索世界",
             },
             'year': 1,
             'season': self.season,
@@ -411,7 +500,6 @@ class Game:
             'hour': hour,
             'minute': int((self.game_time % 1) * 60),
             'weather': 'Sunny',
-            'goal': self.player_agent.brain.planner.current_goal or "探索世界",
             'speed': self.speed,
             'paused': self.paused,
             'controls': 'WASD:移动 | 空格:切换AI/玩家 | F12:上帝模式',
@@ -427,20 +515,19 @@ class Game:
         
     async def run(self):
         """主循环"""
-        print("🎮 AnotherYou ECO v0.6 - AI灵魂版")
+        print("🎮 AnotherYou ECO v0.7 - 现代版")
         print("=" * 50)
-        print("✨ 核心特性:")
-        print("  • 完全自主AI（ReAct循环）")
-        print("  • 记忆系统（长期保存）")
-        print("  • 技能学习（终身成长）")
-        print("  • 空格键切换玩家/AI控制")
-        print("  • 每日自动反思")
+        print("✨ 新特性:")
+        print("  • A*智能路径寻找")
+        print("  • 平滑移动（无抖动）")
+        print("  • 现代UI（圆角面板+动画）")
+        print("  • 颜色编码+图标")
         print("=" * 50)
         print("控制:")
         print("  空格 - 切换玩家控制/AI自主")
         print("  WASD - 移动")
-        print("  F12  - 上帝模式")
         print("  ESC  - 释放控制（切回AI）")
+        print("  F12  - 上帝模式")
         print("=" * 50)
         
         while self.running:
