@@ -385,7 +385,7 @@ class Game:
                         tile_image = self.tileset.get_tile(tile_type, variant)
                         screen.blit(tile_image, (pixel_x, pixel_y))
                             
-    def update(self, dt: float, input_keys: Dict):
+    def update(self, dt: float, is_player: bool, input_keys: Dict):
         if self.paused:
             return
             
