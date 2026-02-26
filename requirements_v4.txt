@@ -1,0 +1,17 @@
+# AnotherYou ECO v0.4 Requirements
+
+# Core
+pygame>=2.5.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+
+# AI / LLM (optional but recommended)
+openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.0.5
+
+# Memory / Vector DB (optional)
+chromadb>=0.4.0
+
+# Data
+sqlite3-python
