@@ -1,11 +1,11 @@
 """
 Modern HUD - 现代游戏HUD
-圆角面板 + 图标 + 动画 + 颜色编码
+圆角面板 + 图标 + 颜色编码 + 动画
 """
 
 import pygame
 import math
-from typing import Dict, List, Tuple
+from typing import Dict
 
 class ModernHUD:
     """现代风格HUD"""
@@ -32,8 +32,6 @@ class ModernHUD:
             'energy_high': (100, 255, 100),
             'energy_mid': (255, 220, 80),
             'energy_low': (255, 80, 80),
-            'mood_happy': (255, 200, 100),
-            'mood_sad': (150, 180, 220),
         }
         
         # 动画状态
@@ -47,22 +45,14 @@ class ModernHUD:
         
     def render(self, screen: pygame.Surface, game_state: Dict):
         """渲染HUD"""
-        # 左上：玩家面板
         self._render_player_panel(screen, game_state.get('player', {}))
-        
-        # 右上：时间天气面板
         self._render_time_panel(screen, game_state)
-        
-        # 底部：工具栏
         self._render_toolbar(screen, game_state)
         
-        # 小地图（上帝模式）
         if game_state.get('god_mode'):
             self._render_minimap(screen, game_state)
             
-    def _draw_rounded_panel(self, screen: pygame.Surface, x: int, y: int, 
-                           w: int, h: int, radius: int = 12, 
-                           border: bool = True, glow: bool = False):
+    def _draw_rounded_panel(self, screen, x, y, w, h, radius=12, border=True, glow=False):
         """绘制圆角面板"""
         # 阴影
         shadow_rect = pygame.Rect(x + 3, y + 3, w, h)
@@ -72,7 +62,6 @@ class ModernHUD:
         panel_rect = pygame.Rect(x, y, w, h)
         self._draw_rounded_rect(screen, panel_rect, radius, self.theme['panel_bg'])
         
-        # 边框
         if border:
             pygame.draw.rect(screen, self.theme['panel_border'], panel_rect, 2, border_radius=radius)
             
@@ -80,35 +69,29 @@ class ModernHUD:
         highlight_rect = pygame.Rect(x + 4, y + 2, w - 8, 2)
         pygame.draw.rect(screen, (80, 90, 100, 150), highlight_rect, border_radius=1)
         
-        # 发光效果
         if glow:
             glow_color = (*self.theme['panel_highlight'][:3], int(30 * self.pulse))
             glow_rect = pygame.Rect(x - 2, y - 2, w + 4, h + 4)
             self._draw_rounded_rect(screen, glow_rect, radius + 2, glow_color)
             
-    def _draw_rounded_rect(self, screen: pygame.Surface, rect: pygame.Rect, 
-                          radius: int, color: Tuple):
-        """绘制圆角矩形（支持alpha）"""
+    def _draw_rounded_rect(self, screen, rect, radius, color):
+        """绘制圆角矩形"""
         if len(color) == 4 and color[3] < 255:
-            # 使用带alpha的表面
             s = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
             pygame.draw.rect(s, color, (0, 0, rect.width, rect.height), border_radius=radius)
             screen.blit(s, rect.topleft)
         else:
             pygame.draw.rect(screen, color, rect, border_radius=radius)
             
-    def _render_player_panel(self, screen: pygame.Surface, player: Dict):
+    def _render_player_panel(self, screen, player):
         """渲染玩家面板"""
-        panel_w = 260
-        panel_h = 180
+        panel_w, panel_h = 260, 180
         x, y = 15, 15
         
-        # 面板背景
-        is_player_control = '玩家' in player.get('status', '')
-        self._draw_rounded_panel(screen, x, y, panel_w, panel_h, 
-                                glow=is_player_control)
+        is_player = '玩家' in player.get('status', '')
+        self._draw_rounded_panel(screen, x, y, panel_w, panel_h, glow=is_player)
         
-        # 头像区域
+        # 头像
         avatar_rect = pygame.Rect(x + 12, y + 12, 40, 40)
         pygame.draw.circle(screen, (60, 70, 90), avatar_rect.center, 20)
         pygame.draw.circle(screen, self.theme['panel_highlight'], avatar_rect.center, 20, 2)
@@ -126,7 +109,7 @@ class ModernHUD:
         
         line_y = y + 65
         
-        # 金币（大图标）
+        # 金币
         money = player.get('money', 0)
         money_icon = self.font_large.render("💰", True, self.theme['accent_gold'])
         screen.blit(money_icon, (x + 12, line_y))
@@ -134,7 +117,7 @@ class ModernHUD:
         screen.blit(money_text, (x + 40, line_y))
         line_y += 32
         
-        # 能量条（带图标）
+        # 能量条
         energy = player.get('energy', 100)
         self._render_modern_bar(screen, x + 12, line_y, 230, 16, 
                                energy / 100, "⚡", 
@@ -144,26 +127,24 @@ class ModernHUD:
         # 心情条
         mood = player.get('mood', 50)
         mood_icon = '😄' if mood > 70 else '🙂' if mood > 40 else '😔'
-        mood_color = self.theme['mood_happy'] if mood > 50 else self.theme['mood_sad']
+        mood_color = self.theme['energy_high'] if mood > 50 else (150, 180, 220)
         self._render_modern_bar(screen, x + 12, line_y, 230, 16, 
                                mood / 100, mood_icon, mood_color)
         line_y += 26
         
-        # 当前目标
+        # 目标
         goal = player.get('goal', '探索中...')
         goal_text = self.font_small.render(f"🎯 {goal}", True, self.theme['text_dim'])
         screen.blit(goal_text, (x + 12, line_y))
         
-    def _render_time_panel(self, screen: pygame.Surface, game_state: Dict):
-        """渲染时间天气面板"""
-        panel_w = 280
-        panel_h = 100
+    def _render_time_panel(self, screen, game_state):
+        """渲染时间面板"""
+        panel_w, panel_h = 280, 100
         x = self.screen_width - panel_w - 15
         y = 15
         
         self._draw_rounded_panel(screen, x, y, panel_w, panel_h)
         
-        # 季节图标 + 年份
         season = game_state.get('season', 'Spring')
         season_icons = {'Spring': '🌸', 'Summer': '☀️', 'Autumn': '🍂', 'Winter': '❄️'}
         season_icon = season_icons.get(season, '🌸')
@@ -173,7 +154,6 @@ class ModernHUD:
                                             True, self.theme['text'])
         screen.blit(season_text, (x + 15, y + 12))
         
-        # 时间（大字体）
         day = game_state.get('day', 1)
         hour = game_state.get('hour', 12)
         minute = game_state.get('minute', 0)
@@ -182,7 +162,7 @@ class ModernHUD:
         time_text = self.font_large.render(time_str, True, self.theme['accent_cyan'])
         screen.blit(time_text, (x + 15, y + 40))
         
-        # 天气（带图标）
+        # 天气
         weather = game_state.get('weather', 'Sunny')
         weather_icons = {'Sunny': '☀️', 'Rainy': '🌧️', 'Snowy': '❄️', 'Cloudy': '☁️'}
         weather_icon = weather_icons.get(weather, '☀️')
@@ -190,22 +170,21 @@ class ModernHUD:
         weather_text = self.font.render(f"{weather_icon} {weather}", True, self.theme['text_dim'])
         screen.blit(weather_text, (x + 15, y + 68))
         
-    def _render_toolbar(self, screen: pygame.Surface, game_state: Dict):
+    def _render_toolbar(self, screen, game_state):
         """渲染底部工具栏"""
         bar_h = 55
         y = self.screen_height - bar_h - 12
         
-        # 背景条
         bar_rect = pygame.Rect(12, y, self.screen_width - 24, bar_h)
         self._draw_rounded_rect(screen, bar_rect, 10, self.theme['panel_bg'])
         pygame.draw.rect(screen, self.theme['panel_border'], bar_rect, 2, border_radius=10)
         
-        # 左侧：控制提示
+        # 控制提示
         controls = game_state.get('controls', 'WASD:移动 | 空格:切换')
         ctrl_text = self.font.render(controls, True, self.theme['text_dim'])
         screen.blit(ctrl_text, (25, y + 18))
         
-        # 中间：速度指示（带脉冲效果）
+        # 速度指示
         speed = game_state.get('speed', 1)
         paused = game_state.get('paused', False)
         
@@ -216,7 +195,6 @@ class ModernHUD:
             speed_text = f"⚡ {speed}x"
             speed_color = (100, 255, 150)
             
-        # 脉冲效果
         pulse_alpha = int(100 + 50 * self.pulse)
         pulse_rect = pygame.Rect(self.screen_width // 2 - 35, y + 10, 70, 35)
         pulse_surf = pygame.Surface((70, 35), pygame.SRCALPHA)
@@ -226,32 +204,28 @@ class ModernHUD:
         speed_render = self.font_large.render(speed_text, True, speed_color)
         screen.blit(speed_render, (self.screen_width // 2 - 30, y + 15))
         
-        # 右侧：模式指示
+        # 模式指示
         mode = game_state.get('mode', 'PLAYER')
         mode_color = self.theme['energy_low'] if mode == 'GOD' else self.theme['accent_cyan']
         mode_text = self.font.render(f"👁️ {mode} MODE", True, mode_color)
         screen.blit(mode_text, (self.screen_width - mode_text.get_width() - 25, y + 18))
         
-    def _render_minimap(self, screen: pygame.Surface, game_state: Dict):
+    def _render_minimap(self, screen, game_state):
         """渲染小地图"""
         size = 140
         x = self.screen_width - size - 20
         y = 130
         
-        # 背景
         map_rect = pygame.Rect(x, y, size, size)
         self._draw_rounded_rect(screen, map_rect, 10, (20, 25, 30, 240))
         pygame.draw.rect(screen, self.theme['panel_border'], map_rect, 2, border_radius=10)
         
-        # 标题
         title = self.font.render("🗺️ 地图", True, self.theme['text'])
         screen.blit(title, (x + 10, y + 8))
         
-        # 地图区域
         map_area = pygame.Rect(x + 8, y + 32, size - 16, size - 40)
         pygame.draw.rect(screen, (35, 40, 50), map_area, border_radius=4)
         
-        # 玩家位置
         if game_state.get('player_pos'):
             px, py = game_state['player_pos']
             world_w = game_state.get('world_width', 100)
@@ -260,30 +234,23 @@ class ModernHUD:
             dot_x = map_area.x + (px / world_w) * map_area.width
             dot_y = map_area.y + (py / world_h) * map_area.height
             
-            # 脉冲效果
             pulse_size = 4 + int(2 * self.pulse)
             pygame.draw.circle(screen, (255, 215, 0), (int(dot_x), int(dot_y)), pulse_size)
             pygame.draw.circle(screen, (255, 255, 255), (int(dot_x), int(dot_y)), 3)
             
-    def _render_modern_bar(self, screen: pygame.Surface, x: int, y: int, 
-                          width: int, height: int, percent: float, 
-                          icon: str, color: Tuple):
+    def _render_modern_bar(self, screen, x, y, width, height, percent, icon, color):
         """渲染现代进度条"""
-        # 图标
         icon_text = self.font_large.render(icon, True, color)
         screen.blit(icon_text, (x, y - 2))
         
-        # 条背景
         bar_x = x + 30
         bar_rect = pygame.Rect(bar_x, y + 2, width - 40, height - 4)
         pygame.draw.rect(screen, (40, 45, 55), bar_rect, border_radius=height//2)
         
-        # 填充（带渐变效果）
         fill_width = int((width - 40) * max(0, min(1, percent)))
         if fill_width > 0:
             fill_rect = pygame.Rect(bar_x, y + 2, fill_width, height - 4)
             
-            # 渐变填充
             for i in range(fill_width):
                 gradient = i / fill_width
                 r = int(color[0] * (0.7 + 0.3 * gradient))
@@ -293,17 +260,15 @@ class ModernHUD:
                                (bar_x + i, y + 2), 
                                (bar_x + i, y + height - 6))
                                
-            # 高光
             highlight_rect = pygame.Rect(bar_x, y + 2, fill_width, 3)
             pygame.draw.rect(screen, 
                            (min(255, color[0] + 60), min(255, color[1] + 60), min(255, color[2] + 60)),
                            highlight_rect, border_radius=2)
             
-        # 数值
         value_text = self.font.render(f"{int(percent * 100)}", True, self.theme['text'])
         screen.blit(value_text, (bar_x + width - 35, y + 1))
         
-    def _get_energy_color(self, energy: float) -> Tuple[int, int, int]:
+    def _get_energy_color(self, energy):
         """根据能量值获取颜色"""
         if energy > 60:
             return self.theme['energy_high']

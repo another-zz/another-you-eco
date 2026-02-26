@@ -1,11 +1,11 @@
 """
-Pathfinder - A* 路径寻找 + 平滑移动
+Pathfinder - A* 路径寻找 + Bezier 平滑移动
 参考 KidsCanCode + PyDew Valley
 """
 
 import heapq
 import math
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional
 from dataclasses import dataclass
 import pygame
 
@@ -14,8 +14,8 @@ class Node:
     """A*节点"""
     x: int
     y: int
-    g: float = 0  # 从起点到当前节点的代价
-    h: float = 0  # 启发式估计到终点的代价
+    g: float = 0
+    h: float = 0
     parent: Optional['Node'] = None
     
     @property
@@ -38,7 +38,7 @@ class AStarPathfinder:
     def __init__(self, world_width: int, world_height: int):
         self.width = world_width
         self.height = world_height
-        self.obstacles: set = set()  # 障碍物集合 (x, y)
+        self.obstacles: set = set()
         
     def set_obstacles(self, obstacles: List[Tuple[int, int]]):
         """设置障碍物"""
@@ -54,7 +54,7 @@ class AStarPathfinder:
         """启发式函数（对角线距离）"""
         dx = abs(x1 - x2)
         dy = abs(y1 - y2)
-        return max(dx, dy) + 0.414 * min(dx, dy)  # 对角线距离
+        return max(dx, dy) + 0.414 * min(dx, dy)
         
     def find_path(self, start_x: float, start_y: float, 
                   end_x: float, end_y: float) -> List[Tuple[int, int]]:
@@ -62,7 +62,6 @@ class AStarPathfinder:
         start = Node(int(start_x), int(start_y))
         end = Node(int(end_x), int(end_y))
         
-        # 如果终点不可行走，找最近的可行走点
         if not self.is_walkable(end.x, end.y):
             end = self._find_nearest_walkable(end.x, end.y)
             if end is None:
@@ -70,43 +69,35 @@ class AStarPathfinder:
                 
         open_set = []
         heapq.heappush(open_set, start)
-        
-        closed_set: Dict[Tuple[int, int], Node] = {}
-        open_dict: Dict[Tuple[int, int], Node] = {(start.x, start.y): start}
+        closed_set: set = set()
+        open_dict: dict = {(start.x, start.y): start}
         
         while open_set:
             current = heapq.heappop(open_set)
             
             if current.x == end.x and current.y == end.y:
-                # 找到路径，重建
                 return self._reconstruct_path(current)
                 
-            closed_set[(current.x, current.y)] = current
+            closed_set.add((current.x, current.y))
             
-            # 检查8个方向
             for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1),
                           (-1, -1), (-1, 1), (1, -1), (1, 1)]:
                 nx, ny = current.x + dx, current.y + dy
                 
-                # 跳过已在关闭列表的
                 if (nx, ny) in closed_set:
                     continue
                     
-                # 检查是否可行走
                 if not self.is_walkable(nx, ny):
                     continue
                     
-                # 对角线移动时检查角落
                 if abs(dx) == 1 and abs(dy) == 1:
                     if not self.is_walkable(current.x + dx, current.y) or \
                        not self.is_walkable(current.x, current.y + dy):
                         continue
                         
-                # 计算代价
                 move_cost = 1.414 if abs(dx) == 1 and abs(dy) == 1 else 1.0
                 new_g = current.g + move_cost
                 
-                # 检查是否已在开放列表
                 neighbor = open_dict.get((nx, ny))
                 if neighbor is None:
                     neighbor = Node(nx, ny)
@@ -118,10 +109,9 @@ class AStarPathfinder:
                 elif new_g < neighbor.g:
                     neighbor.g = new_g
                     neighbor.parent = current
-                    # 重新排序堆
                     heapq.heapify(open_set)
                     
-        return []  # 无路径
+        return []
         
     def _find_nearest_walkable(self, x: int, y: int) -> Optional[Node]:
         """找到最近的可行走点"""
@@ -144,14 +134,13 @@ class AStarPathfinder:
 
 
 class SmoothMovement:
-    """平滑移动系统 - Bezier曲线插值"""
+    """平滑移动 - Bezier曲线插值"""
     
     def __init__(self, speed: float = 3.0):
         self.speed = speed
         self.path: List[Tuple[float, float]] = []
         self.current_index = 0
         self.progress = 0.0
-        self.target_pos = pygame.math.Vector2(0, 0)
         self.current_pos = pygame.math.Vector2(0, 0)
         self.is_moving = False
         
@@ -162,7 +151,6 @@ class SmoothMovement:
             self.is_moving = False
             return
             
-        # 将整数路径点转换为浮点，并添加贝塞尔曲线平滑
         self.path = self._smooth_path(path, start_pos)
         self.current_index = 0
         self.progress = 0.0
@@ -177,14 +165,12 @@ class SmoothMovement:
             
         smoothed = [start_pos]
         
-        # 在每对点之间插值
         for i in range(len(path) - 1):
             p0 = pygame.math.Vector2(path[i] if i == 0 else path[i-1])
             p1 = pygame.math.Vector2(path[i])
             p2 = pygame.math.Vector2(path[i+1])
             p3 = pygame.math.Vector2(path[i+2] if i+2 < len(path) else path[i+1])
             
-            # Catmull-Rom插值
             for t in [0.25, 0.5, 0.75]:
                 point = self._catmull_rom(p0, p1, p2, p3, t)
                 smoothed.append((point.x, point.y))
@@ -192,9 +178,7 @@ class SmoothMovement:
         smoothed.append((float(path[-1][0]), float(path[-1][1])))
         return smoothed
         
-    def _catmull_rom(self, p0: pygame.math.Vector2, p1: pygame.math.Vector2,
-                    p2: pygame.math.Vector2, p3: pygame.math.Vector2, 
-                    t: float) -> pygame.math.Vector2:
+    def _catmull_rom(self, p0, p1, p2, p3, t: float):
         """Catmull-Rom样条插值"""
         t2 = t * t
         t3 = t2 * t
@@ -211,7 +195,6 @@ class SmoothMovement:
         if not self.is_moving or not self.path:
             return (self.current_pos.x, self.current_pos.y)
             
-        # 移动到下一个路径点
         if self.current_index < len(self.path) - 1:
             target = pygame.math.Vector2(self.path[self.current_index + 1])
             direction = target - self.current_pos
