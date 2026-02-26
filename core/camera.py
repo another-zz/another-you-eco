@@ -44,9 +44,16 @@ class GameCamera:
         """更新相机位置"""
         
         if self.target and not self.god_mode:
-            # 平滑跟随目标
-            target_x = self.target.x * self.tile_size - screen_width // 2
-            target_y = self.target.y * self.tile_size - screen_height // 2
+            # 平滑跟随目标 - 支持直接属性或嵌套brain属性
+            target_x_pos = getattr(self.target, 'x', None)
+            if target_x_pos is None and hasattr(self.target, 'brain'):
+                target_x_pos = self.target.brain.x
+                target_y_pos = self.target.brain.y
+            else:
+                target_y_pos = getattr(self.target, 'y', 0)
+            
+            target_x = target_x_pos * self.tile_size - screen_width // 2
+            target_y = target_y_pos * self.tile_size - screen_height // 2
             
             self.x += (target_x - self.x) * self.smooth_speed
             self.y += (target_y - self.y) * self.smooth_speed
