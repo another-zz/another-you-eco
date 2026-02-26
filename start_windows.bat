@@ -26,7 +26,7 @@ if not exist venv (
 echo.
 echo [3/4] 安装依赖...
 call venv\Scripts\activate
-pip install -q pygame numpy openai
+pip install -q pygame numpy aiohttp
 
 echo.
 echo [4/4] 启动游戏...

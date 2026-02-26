@@ -26,7 +26,7 @@ fi
 echo ""
 echo "[3/4] 安装依赖..."
 source venv/bin/activate
-pip install -q pygame numpy openai
+pip install -q pygame numpy aiohttp
 
 echo ""
 echo "[4/4] 启动游戏..."
