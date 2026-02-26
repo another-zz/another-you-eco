@@ -69,6 +69,8 @@ class PhysicalObject:
             }
 
 
+from ai.llm_brain import LLMBrain
+
 class PureAgent:
     """
     纯AI生命体 - 只给物理身体，不给行为预设
@@ -122,8 +124,12 @@ class PureAgent:
             'sociability': random.uniform(0.2, 0.8),    # 社交倾向
             'persistence': random.uniform(0.3, 0.9),    # 坚持度
         }
+        
+        # LLM大脑
+        self.brain = LLMBrain(self.id, self.traits)
+        self.thought = "..."  # 当前想法
     
-    def perceive(self) -> Dict:
+    async def think_async(self, perception: Dict) -> Dict:
         """
         感知环境 - AI的传感器
         返回原始数据，AI自己解释含义
@@ -167,6 +173,24 @@ class PureAgent:
             'self': self_state,
             'time': self.world.tick,
         }
+    
+    async def think_async(self, perception: Dict) -> Dict:
+        """
+        思考决策 - AI的核心（异步版本，支持LLM）
+        """
+        # 记录经验
+        self._record_experience(perception)
+        
+        # 添加发现的行为到上下文
+        perception['discovered_behaviors'] = list(self.discovered_behaviors)
+        
+        # 使用LLM大脑决策
+        decision = await self.brain.think(perception)
+        
+        # 更新想法气泡
+        self.thought = decision.get('reasoning', '...')[:30]
+        
+        return decision
     
     def think(self, perception: Dict) -> Dict:
         """
