@@ -1,611 +1,482 @@
 """
-AnotherYou ECO - 自主演化AI世界 v0.1
-核心：自然规律驱动的AI社会模拟
+AnotherYou ECO - 主版本
+持续迭代的唯一入口
+当前: v0.6 专业像素版
 """
 
+import pygame
 import asyncio
 import random
-import json
-import sqlite3
-from datetime import datetime, timedelta
-from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
+import math
+from typing import Dict, List
 
-# ============ 常量定义 ============
+import sys
+sys.path.insert(0, '/root/.openclaw/workspace/another-you-eco')
 
-TICKS_PER_HOUR = 60  # 每小时60tick
-HOURS_PER_DAY = 24
-DAY_START = 6  # 早晨6点
-NIGHT_START = 20  # 晚上8点
+from core.sprite_loader import TilesetManager, CharacterSprite, SpriteSheet
+from core.camera import GameCamera
+from core.animation import AnimationManager, EnvironmentEffects
+from ui.pro_hud import ProfessionalHUD
 
-class NeedType(Enum):
-    """需求类型 - 马斯洛需求层次"""
-    SURVIVAL = auto()      # 生存：饥饿、口渴、健康
-    SAFETY = auto()        # 安全：住所、财产、秩序
-    BELONGING = auto()     # 归属：友谊、爱情、社群
-    ESTEEM = auto()        # 尊重：成就、地位、认可
-    SELF_ACTUALIZATION = auto()  # 自我实现：创造、探索
+# 配置
+SCREEN_WIDTH = 1400
+SCREEN_HEIGHT = 900
+FPS = 60
+TILE_SIZE = 32
 
-class ResourceType(Enum):
-    """资源类型"""
-    FOOD = "food"           # 食物
-    WATER = "water"         # 水
-    WOOD = "wood"           # 木材
-    STONE = "stone"         # 石头
-    TOOL = "tool"           # 工具
-    MEDICINE = "medicine"   # 药品
-    LUXURY = "luxury"       # 奢侈品
 
-class SkillType(Enum):
-    """技能类型"""
-    GATHERING = "gathering"   # 采集
-    FARMING = "farming"       # 农耕
-    CRAFTING = "crafting"     #  crafting
-    TRADING = "trading"       # 交易
-    SOCIAL = "social"         # 社交
-    COMBAT = "combat"         # 战斗
-
-class RelationshipType(Enum):
-    """关系类型"""
-    STRANGER = 0
-    ACQUAINTANCE = 1
-    FRIEND = 2
-    CLOSE_FRIEND = 3
-    FAMILY = 4
-    RIVAL = -1
-    ENEMY = -2
-
-# ============ 数据类 ============
-
-@dataclass
-class Need:
-    """需求"""
-    type: NeedType
-    name: str
-    current: float = 100.0  # 当前值
-    max: float = 100.0
-    decay_rate: float = 1.0  # 每秒衰减
-    priority: float = 0.0   # 动态优先级
+class WorldMap:
+    """游戏世界地图"""
     
-    def update(self, delta_time: float):
-        """更新需求"""
-        self.current = max(0, self.current - self.decay_rate * delta_time)
-        # 越低优先级越高
-        self.priority = (self.max - self.current) / self.max
-    
-    def satisfy(self, amount: float):
-        """满足需求"""
-        self.current = min(self.max, self.current + amount)
-
-@dataclass
-class Memory:
-    """记忆"""
-    timestamp: datetime
-    event: str
-    importance: float  # 0-10
-    emotions: Dict[str, float] = field(default_factory=dict)  # 情绪标签
-    
-    def to_dict(self):
-        return {
-            'timestamp': self.timestamp.isoformat(),
-            'event': self.event,
-            'importance': self.importance,
-            'emotions': self.emotions
-        }
-
-@dataclass
-class Relationship:
-    """关系"""
-    target_id: str
-    type: RelationshipType
-    trust: float = 0.0      # -100 到 100
-    affection: float = 0.0  # 好感度
-    history: List[Memory] = field(default_factory=list)
-
-# ============ 核心类 ============
-
-class World:
-    """世界 - 容器和规则引擎"""
-    
-    def __init__(self):
-        self.time = datetime(2024, 1, 1, 8, 0)  # 起始时间
-        self.tick = 0
-        self.agents: Dict[str, 'Agent'] = {}
-        self.resources: Dict[Tuple[int, int], Dict] = {}  # 位置 -> 资源
-        self.buildings: Dict[Tuple[int, int], Dict] = {}  # 位置 -> 建筑
-        self.events: List[Dict] = []  # 世界事件日志
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.tiles = []
+        self.tileset = TilesetManager(TILE_SIZE)
         
-        # 生态参数
-        self.resource_regen_rate = 0.1  # 资源再生率
-        self.weather = 'sunny'  # 天气
+        self._generate()
         
-        self._init_world()
-    
-    def _init_world(self):
-        """初始化世界"""
-        # 生成初始资源
-        for _ in range(50):
-            x = random.randint(-50, 50)
-            y = random.randint(-50, 50)
-            self.resources[(x, y)] = {
-                'type': random.choice([ResourceType.FOOD, ResourceType.WOOD, ResourceType.STONE]),
-                'amount': random.randint(5, 20),
-                'quality': random.uniform(0.5, 1.0)
-            }
-    
-    def update(self, delta_ticks: int = 1):
-        """更新世界"""
-        self.tick += delta_ticks
+    def _generate(self):
+        """生成地图"""
+        import math
         
-        # 时间推进
-        minutes_passed = delta_ticks / TICKS_PER_HOUR * 60
-        self.time += timedelta(minutes=minutes_passed)
+        center_x, center_y = self.width // 2, self.height // 2
         
-        # 资源再生
-        if random.random() < self.resource_regen_rate:
-            self._spawn_resource()
+        for y in range(self.height):
+            row = []
+            for x in range(self.width):
+                dist = math.sqrt((x - center_x)**2 + (y - center_y)**2)
+                
+                # 边缘山地
+                if dist > min(self.width, self.height) * 0.42:
+                    tile_type = 'mountain'
+                # 河流
+                elif abs(y - center_y) < 4 and random.random() > 0.2:
+                    tile_type = 'water'
+                # 湖泊
+                elif dist < 10 and random.random() > 0.4:
+                    tile_type = 'water'
+                # 森林群
+                elif random.random() < 0.22:
+                    tile_type = 'forest'
+                # 沙滩
+                elif random.random() < 0.08:
+                    tile_type = 'sand'
+                else:
+                    tile_type = 'grass'
+                    
+                variant = random.randint(0, 2)
+                row.append((tile_type, variant))
+            self.tiles.append(row)
+            
+    def get_tile(self, x: int, y: int):
+        """获取瓦片"""
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.tiles[y][x]
+        return ('grass', 0)
         
-        # 更新所有AI
-        for agent in self.agents.values():
-            agent.update(delta_ticks)
+    def render(self, screen: pygame.Surface, camera: GameCamera, animation_time: float):
+        """渲染地图"""
+        start_col, end_col, start_row, end_row = camera.get_visible_range(
+            screen.get_width(), screen.get_height()
+        )
         
-        # 处理交互
-        self._process_interactions()
-    
-    def _spawn_resource(self):
-        """生成新资源"""
-        x = random.randint(-100, 100)
-        y = random.randint(-100, 100)
-        if (x, y) not in self.resources:
-            self.resources[(x, y)] = {
-                'type': random.choice(list(ResourceType)),
-                'amount': random.randint(3, 10),
-                'quality': random.uniform(0.5, 1.0)
-            }
-    
-    def _process_interactions(self):
-        """处理AI之间的交互"""
-        # 找出距离近的AI
-        agent_list = list(self.agents.values())
-        for i, a1 in enumerate(agent_list):
-            for a2 in agent_list[i+1:]:
-                dist = abs(a1.x - a2.x) + abs(a1.y - a2.y)
-                if dist <= 2:  # 相邻
-                    a1.encounter(a2)
-                    a2.encounter(a1)
-    
-    def get_time_of_day(self) -> str:
-        """获取时间段"""
-        hour = self.time.hour
-        if 5 <= hour < 12:
-            return 'morning'
-        elif 12 <= hour < 18:
-            return 'afternoon'
-        elif 18 <= hour < 22:
-            return 'evening'
-        else:
-            return 'night'
-    
-    def is_night(self) -> bool:
-        """是否夜晚"""
-        return self.time.hour >= NIGHT_START or self.time.hour < DAY_START
+        for row in range(start_row, end_row):
+            for col in range(start_col, end_col):
+                tile_type, variant = self.tiles[row][col]
+                
+                x = col * TILE_SIZE - int(camera.x)
+                y = row * TILE_SIZE - int(camera.y)
+                
+                # 特殊动画瓦片
+                if tile_type == 'water':
+                    EnvironmentEffects.render_water_animation(
+                        screen, x, y, TILE_SIZE, animation_time,
+                        (60, 110, 200)
+                    )
+                elif tile_type == 'forest':
+                    EnvironmentEffects.render_tree_sway(
+                        screen, x, y, TILE_SIZE, animation_time,
+                        (40, 100, 50)
+                    )
+                else:
+                    # 普通瓦片
+                    tile_image = self.tileset.get_tile(tile_type, variant)
+                    screen.blit(tile_image, (x, y))
 
 
-class Agent:
-    """AI生命体 - 自主决策的个体"""
+class GameAgent:
+    """游戏AI角色"""
     
-    def __init__(self, agent_id: str, name: str, world: World):
+    SHIRT_COLORS = [
+        (220, 80, 80), (80, 120, 220), (80, 180, 80),
+        (220, 180, 60), (180, 100, 200), (255, 140, 80),
+    ]
+    
+    def __init__(self, agent_id: str, name: str, x: float, y: float, color_idx: int):
         self.id = agent_id
         self.name = name
-        self.world = world
+        self.x = x
+        self.y = y
         
-        # 位置
-        self.x = random.randint(-20, 20)
-        self.y = random.randint(-20, 20)
-        
-        # 生理状态
+        self.energy = 100.0
+        self.mood = 70.0
+        self.money = random.randint(50, 200)
         self.alive = True
-        self.age = 0
         
-        # 需求系统（核心）
-        self.needs = {
-            NeedType.SURVIVAL: Need(NeedType.SURVIVAL, "生存", 100, 100, 0.5),
-            NeedType.SAFETY: Need(NeedType.SAFETY, "安全", 80, 100, 0.2),
-            NeedType.BELONGING: Need(NeedType.BELONGING, "归属", 60, 100, 0.3),
-            NeedType.ESTEEM: Need(NeedType.ESTEEM, "尊重", 50, 100, 0.15),
-            NeedType.SELF_ACTUALIZATION: Need(NeedType.SELF_ACTUALIZATION, "自我实现", 30, 100, 0.1),
-        }
+        # 创建精灵
+        self.sprite = self._create_sprite(color_idx)
         
-        # 资源
-        self.inventory: Dict[ResourceType, float] = {
-            ResourceType.FOOD: 10,
-            ResourceType.WATER: 10,
-        }
-        self.money = random.randint(10, 50)
-        
-        # 技能
-        self.skills = {skill: random.uniform(0.1, 0.5) for skill in SkillType}
-        self.occupation = None  # 职业
-        
-        # 社会关系
-        self.relationships: Dict[str, Relationship] = {}
-        self.reputation = 0  # 声望
-        
-        # 记忆
-        self.memories: List[Memory] = []
-        self.short_term_memory = []  # 最近事件
-        
-        # 当前状态
-        self.state = 'idle'  # idle, working, sleeping, socializing, traveling
-        self.current_action = None
+        self.goal = "探索世界"
         self.action_timer = 0
+        self.move_cooldown = 0
         
-        # 性格
-        self.personality = {
-            'aggression': random.uniform(0, 1),
-            'sociability': random.uniform(0, 1),
-            'curiosity': random.uniform(0, 1),
-            'greed': random.uniform(0, 1),
-            'altruism': random.uniform(0, 1),
-        }
+    def _create_sprite(self, color_idx: int) -> CharacterSprite:
+        """创建角色精灵"""
+        # 使用程序生成的简单精灵图
+        # 实际项目中应该加载外部sprite sheet
+        color = self.SHIRT_COLORS[color_idx % len(self.SHIRT_COLORS)]
         
-        # 住所
-        self.home = None
-    
-    def update(self, delta_ticks: int):
-        """AI更新 - 每tick调用"""
+        # 创建临时sprite sheet
+        sheet_size = 64  # 4x4 16x16 sprites
+        sheet = pygame.Surface((sheet_size, sheet_size), pygame.SRCALPHA)
+        
+        # 绘制4方向x4帧的行走动画
+        for direction in range(4):
+            for frame in range(4):
+                x = frame * 16
+                y = direction * 16
+                
+                # 身体（衣服颜色）
+                body_color = color
+                pygame.draw.rect(sheet, body_color, (x + 4, y + 6, 8, 8))
+                
+                # 头
+                pygame.draw.circle(sheet, (255, 220, 180), (x + 8, y + 5), 3)
+                
+                # 腿（动画）
+                leg_offset = (frame % 2) * 2
+                pygame.draw.rect(sheet, (60, 40, 30), (x + 4 + leg_offset, y + 14, 2, 2))
+                pygame.draw.rect(sheet, (60, 40, 30), (x + 10 - leg_offset, y + 14, 2, 2))
+                
+        sprite_sheet = SpriteSheet.from_surface(sheet, 16, 16)
+        return CharacterSprite(sprite_sheet, None)
+        
+    def update(self, dt: float, world_map: WorldMap, animation: AnimationManager):
+        """更新AI"""
         if not self.alive:
             return
-        
-        # 更新需求
-        for need in self.needs.values():
-            need.update(delta_ticks / TICKS_PER_HOUR)
-        
-        # 检查生存
-        if self.needs[NeedType.SURVIVAL].current <= 0:
-            self._die("饥饿")
+            
+        # 能量消耗
+        self.energy -= 0.03 * dt
+        if self.energy <= 0:
+            self.energy = 0
+            self.alive = False
             return
+            
+        # AI决策
+        self.action_timer += dt
+        self.move_cooldown -= dt
         
-        # 决策
-        if self.action_timer <= 0:
-            self._decide_action()
-        else:
-            self._continue_action(delta_ticks)
+        if self.action_timer > 3.0 and self.move_cooldown <= 0:
+            self.action_timer = 0
+            self._decide_and_move(world_map, animation)
+            
+        # 更新动画
+        self.sprite.update(dt, 0, 0)
         
-        self.age += delta_ticks / TICKS_PER_HOUR / 24  # 年龄增长
-    
-    def _decide_action(self):
-        """决策下一步行动 - 核心AI逻辑"""
-        # 按优先级排序需求
-        urgent_needs = sorted(
-            self.needs.values(),
-            key=lambda n: n.priority,
-            reverse=True
-        )
+    def _decide_and_move(self, world_map: WorldMap, animation: AnimationManager):
+        """决策并移动"""
+        # 简单AI：随机方向移动
+        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        dx, dy = random.choice(directions)
         
-        top_need = urgent_needs[0]
+        new_x = self.x + dx
+        new_y = self.y + dy
         
-        # 根据最紧迫需求决策
-        if top_need.type == NeedType.SURVIVAL and top_need.priority > 0.7:
-            self._handle_survival_need()
+        # 检查边界和可行走
+        if 0 <= new_x < world_map.width and 0 <= new_y < world_map.height:
+            tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
+            if tile_type not in ['water', 'mountain']:
+                self.x = new_x
+                self.y = new_y
+                self.move_cooldown = 0.5
+                
+                # 添加尘土效果
+                screen_x = self.x * TILE_SIZE
+                screen_y = self.y * TILE_SIZE
+                animation.add_dust(screen_x, screen_y)
+                
+                # 更新动画方向
+                if dy < 0:
+                    self.sprite.current_direction = 'up'
+                elif dy > 0:
+                    self.sprite.current_direction = 'down'
+                elif dx < 0:
+                    self.sprite.current_direction = 'left'
+                elif dx > 0:
+                    self.sprite.current_direction = 'right'
+                    
+                self.sprite.is_moving = True
+                
+        # 更新目标
+        goals = ["寻找食物", "探索森林", "采集资源", "休息", "社交"]
+        self.goal = random.choice(goals)
         
-        elif top_need.type == NeedType.SAFETY and top_need.priority > 0.5:
-            self._handle_safety_need()
+    def render(self, screen: pygame.Surface, camera: GameCamera, is_player: bool = False):
+        """渲染角色"""
+        sx, sy = camera.world_to_screen(self.x, self.y)
         
-        elif top_need.type == NeedType.BELONGING and top_need.priority > 0.4:
-            self._handle_social_need()
-        
-        elif top_need.type == NeedType.ESTEEM:
-            self._handle_esteem_need()
-        
-        else:
-            self._handle_self_actualization()
-        
-        # 记录决策
-        self._add_memory(f"决定{self.current_action}", importance=3)
-    
-    def _handle_survival_need(self):
-        """处理生存需求"""
-        # 找食物
-        if self.inventory.get(ResourceType.FOOD, 0) < 5:
-            # 寻找食物资源
-            food_source = self._find_resource(ResourceType.FOOD)
-            if food_source:
-                self.state = 'working'
-                self.current_action = 'gathering_food'
-                self.target = food_source
-                self.action_timer = 30
-            else:
-                # 尝试交易获取食物
-                self._try_trade_for(ResourceType.FOOD)
-        else:
-            # 进食
-            self._eat()
-    
-    def _handle_safety_need(self):
-        """处理安全需求"""
-        if not self.home:
-            # 建造住所
-            if self._has_resources_for_home():
-                self.state = 'working'
-                self.current_action = 'building_home'
-                self.action_timer = 120
-            else:
-                # 收集建材
-                self._gather_building_materials()
-        elif self.world.is_night():
-            # 夜晚回家
-            self.state = 'sleeping'
-            self.current_action = 'sleeping_at_home'
-            self.action_timer = 240  # 睡4小时
-    
-    def _handle_social_need(self):
-        """处理社交需求"""
-        # 找朋友
-        if self.relationships:
-            # 找关系好的
-            friends = [r for r in self.relationships.values() 
-                      if r.type in [RelationshipType.FRIEND, RelationshipType.CLOSE_FRIEND]]
-            if friends:
-                target = random.choice(friends)
-                self.state = 'socializing'
-                self.current_action = 'visiting_friend'
-                self.target = target.target_id
-                self.action_timer = 60
-                return
-        
-        # 没有朋友，尝试结交
-        self.state = 'traveling'
-        self.current_action = 'looking_for_people'
-        self.target = (random.randint(-30, 30), random.randint(-30, 30))
-        self.action_timer = 60
-    
-    def _handle_esteem_need(self):
-        """处理尊重需求"""
-        # 提升技能或赚钱
-        if random.random() < 0.5:
-            self.state = 'working'
-            self.current_action = 'practicing_skill'
-            self.action_timer = 90
-        else:
-            self.state = 'working'
-            self.current_action = 'trading'
-            self.action_timer = 60
-    
-    def _handle_self_actualization(self):
-        """处理自我实现"""
-        # 探索或创造
-        self.state = 'traveling'
-        self.current_action = 'exploring'
-        self.target = (random.randint(-50, 50), random.randint(-50, 50))
-        self.action_timer = 120
-    
-    def _continue_action(self, delta_ticks: int):
-        """继续当前行动"""
-        self.action_timer -= delta_ticks
-        
-        if self.current_action == 'gathering_food':
-            self._gather(ResourceType.FOOD)
-        
-        elif self.current_action == 'building_home':
-            self._build_home()
-        
-        elif self.current_action == 'sleeping_at_home':
-            self._sleep(delta_ticks)
-        
-        elif self.current_action == 'traveling' or self.current_action == 'looking_for_people':
-            self._move_toward_target()
-        
-        elif self.current_action == 'socializing':
-            self._socialize()
-    
-    def _gather(self, resource_type: ResourceType):
-        """采集资源"""
-        # 简化：直接获得资源
-        amount = self.skills[SkillType.GATHERING] * 2
-        self.inventory[resource_type] = self.inventory.get(resource_type, 0) + amount
-        
-        # 消耗生存需求（采集很累）
-        self.needs[NeedType.SURVIVAL].current -= 5
-        
-        # 提升技能
-        self.skills[SkillType.GATHERING] = min(1.0, self.skills[SkillType.GATHERING] + 0.01)
-    
-    def _eat(self):
-        """进食"""
-        if self.inventory.get(ResourceType.FOOD, 0) >= 1:
-            self.inventory[ResourceType.FOOD] -= 1
-            self.needs[NeedType.SURVIVAL].satisfy(30)
-            self._add_memory("吃了一顿饭", importance=2)
-    
-    def _sleep(self, delta_ticks: int):
-        """睡觉"""
-        # 恢复需求
-        hours_slept = delta_ticks / TICKS_PER_HOUR
-        self.needs[NeedType.SURVIVAL].satisfy(hours_slept * 10)
-        self.needs[NeedType.SAFETY].satisfy(hours_slept * 5)
-    
-    def _move_toward_target(self):
-        """向目标移动"""
-        if isinstance(self.target, tuple):
-            tx, ty = self.target
-            dx = 1 if tx > self.x else -1 if tx < self.x else 0
-            dy = 1 if ty > self.y else -1 if ty < self.y else 0
-            self.x += dx
-            self.y += dy
-    
-    def _socialize(self):
-        """社交"""
-        # 简化：满足归属需求
-        self.needs[NeedType.BELONGING].satisfy(10)
-        self.needs[NeedType.ESTEEM].satisfy(5)
-    
-    def encounter(self, other: 'Agent'):
-        """遇到另一个AI"""
-        # 更新关系
-        if other.id not in self.relationships:
-            self.relationships[other.id] = Relationship(
-                other.id, RelationshipType.STRANGER
-            )
-        
-        rel = self.relationships[other.id]
-        
-        # 根据性格决定是否交朋友
-        if self.personality['sociability'] > 0.5 and other.personality['sociability'] > 0.5:
-            rel.trust += 1
-            if rel.trust > 20 and rel.type == RelationshipType.STRANGER:
-                rel.type = RelationshipType.ACQUAINTANCE
-                self._add_memory(f"结识了{other.name}", importance=5)
-        
-        # 可能交易
-        if random.random() < 0.3:
-            self._attempt_trade(other)
-    
-    def _attempt_trade(self, other: 'Agent'):
-        """尝试交易"""
-        # 简化：资源交换
-        pass
-    
-    def _add_memory(self, event: str, importance: float = 5):
-        """添加记忆"""
-        memory = Memory(
-            timestamp=self.world.time,
-            event=event,
-            importance=importance
-        )
-        self.memories.append(memory)
-        self.short_term_memory.append(memory)
-        
-        # 限制短期记忆数量
-        if len(self.short_term_memory) > 10:
-            self.short_term_memory.pop(0)
-    
-    def _die(self, cause: str):
-        """死亡"""
-        self.alive = False
-        self.world.events.append({
-            'time': self.world.time,
-            'type': 'death',
-            'agent': self.name,
-            'cause': cause
-        })
-        print(f"💀 {self.name} 因{cause}去世了")
-    
-    # 辅助方法
-    def _find_resource(self, resource_type: ResourceType) -> Optional[Tuple[int, int]]:
-        """寻找资源"""
-        for (x, y), res in self.world.resources.items():
-            if res['type'] == resource_type and res['amount'] > 0:
-                return (x, y)
-        return None
-    
-    def _has_resources_for_home(self) -> bool:
-        """检查是否有足够资源建家"""
-        return (self.inventory.get(ResourceType.WOOD, 0) >= 20 and
-                self.inventory.get(ResourceType.STONE, 0) >= 10)
-    
-    def _gather_building_materials(self):
-        """收集建材"""
-        if self.inventory.get(ResourceType.WOOD, 0) < 20:
-            self.state = 'working'
-            self.current_action = 'gathering_wood'
-            self.action_timer = 60
-        else:
-            self.state = 'working'
-            self.current_action = 'gathering_stone'
-            self.action_timer = 60
-    
-    def _build_home(self):
-        """建造家"""
-        if self._has_resources_for_home():
-            self.inventory[ResourceType.WOOD] -= 20
-            self.inventory[ResourceType.STONE] -= 10
-            self.home = (self.x, self.y)
-            self.world.buildings[(self.x, self.y)] = {
-                'type': 'home',
-                'owner': self.id,
-                'quality': self.skills[SkillType.CRAFTING]
-            }
-            self._add_memory("建造了自己的家", importance=8)
-            self.needs[NeedType.SAFETY].satisfy(50)
-    
-    def _try_trade_for(self, resource_type: ResourceType):
-        """尝试交易获取资源"""
-        # 简化实现
-        pass
-    
-    def get_status(self) -> Dict:
-        """获取状态摘要"""
-        return {
-            'name': self.name,
-            'state': self.state,
-            'action': self.current_action,
-            'position': (self.x, self.y),
-            'needs': {n.name: f"{n.current:.0f}" for n in self.needs.values()},
-            'inventory': {k.value: f"{v:.1f}" for k, v in self.inventory.items()},
-            'home': self.home is not None,
-            'friends': len([r for r in self.relationships.values() 
-                          if r.type in [RelationshipType.FRIEND, RelationshipType.CLOSE_FRIEND]])
-        }
+        if -50 < sx < screen.get_width() + 50 and -50 < sy < screen.get_height() + 50:
+            # 玩家高亮
+            if is_player:
+                pygame.draw.circle(screen, (255, 215, 0), (sx, sy), 22, 3)
+                
+            # 渲染精灵
+            self.sprite.render(screen, sx, sy, scale=2.0)
+            
+            # 名字
+            font = pygame.font.SysFont('microsoftyahei', 11)
+            name_text = font.render(self.name, True, (255, 255, 255))
+            name_x = sx - name_text.get_width() // 2
+            screen.blit(name_text, (name_x, sy - 28))
+            
+            # 能量条
+            bar_w = 30
+            bar_h = 4
+            energy_pct = self.energy / 100
+            bar_x = sx - bar_w // 2
+            bar_y = sy + 18
+            
+            pygame.draw.rect(screen, (50, 50, 50), (bar_x, bar_y, bar_w, bar_h))
+            energy_color = (0, 255, 0) if energy_pct > 0.5 else (255, 200, 0) if energy_pct > 0.3 else (255, 0, 0)
+            pygame.draw.rect(screen, energy_color, (bar_x, bar_y, int(bar_w * energy_pct), bar_h))
 
 
-class Simulation:
-    """模拟主控"""
+class Game:
+    """主游戏"""
     
     def __init__(self):
-        self.world = World()
-        self.running = False
-        self.speed = 1  # 速度倍率
+        pygame.init()
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("AnotherYou ECO v0.6 - 专业版")
+        self.clock = pygame.time.Clock()
         
-        # 创建初始AI
-        self._create_initial_agents()
-    
-    def _create_initial_agents(self):
-        """创建初始AI"""
-        names = ["小蓝", "小红", "小绿", "小黄", "小紫"]
-        for i, name in enumerate(names):
-            agent = Agent(f"agent_{i}", name, self.world)
-            self.world.agents[agent.id] = agent
-    
-    async def run(self):
-        """运行模拟"""
+        # 世界
+        self.world = WorldMap(100, 100)
+        
+        # AI们
+        self.agents: Dict[str, GameAgent] = {}
+        for i in range(20):
+            agent = GameAgent(
+                f"agent_{i}", f"AI-{i}",
+                random.randint(40, 60), random.randint(40, 60), i
+            )
+            self.agents[agent.id] = agent
+            
+        # 玩家
+        self.player_agent = list(self.agents.values())[0]
+        self.player_control = False
+        
+        # 系统
+        self.camera = GameCamera(100, 100, TILE_SIZE)
+        self.camera.set_target(self.player_agent)
+        self.animation = AnimationManager()
+        self.hud = ProfessionalHUD(SCREEN_WIDTH, SCREEN_HEIGHT)
+        
+        # 时间
+        self.game_time = 0  # 游戏内时间（小时）
+        self.day = 1
+        self.season = 'Spring'
+        
+        # 状态
+        self.paused = False
+        self.speed = 1
         self.running = True
-        print("🌍 AnotherYou ECO 启动")
-        print("=" * 50)
         
-        tick = 0
+    def handle_input(self):
+        """处理输入"""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+                
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F12:
+                    self.camera.toggle_god_mode()
+                elif event.key == pygame.K_SPACE:
+                    self.paused = not self.paused
+                elif event.key == pygame.K_1:
+                    self.speed = 1
+                elif event.key == pygame.K_2:
+                    self.speed = 2
+                elif event.key == pygame.K_3:
+                    self.speed = 5
+                elif event.key == pygame.K_c:
+                    self.player_control = not self.player_control
+                    
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 4:
+                    self.camera.zoom_in()
+                elif event.button == 5:
+                    self.camera.zoom_out()
+                    
+        # 持续按键
+        keys = pygame.key.get_pressed()
+        
+        if self.camera.god_mode:
+            # 上帝模式移动相机
+            speed = 15
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                self.camera.move(0, -speed)
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                self.camera.move(0, speed)
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                self.camera.move(-speed, 0)
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                self.camera.move(speed, 0)
+        else:
+            # 玩家模式
+            if self.player_control:
+                move_speed = 4 * (1/60)
+                dx, dy = 0, 0
+                
+                if keys[pygame.K_w] or keys[pygame.K_UP]:
+                    dy = -move_speed
+                if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                    dy = move_speed
+                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                    dx = -move_speed
+                if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                    dx = move_speed
+                    
+                if dx != 0 or dy != 0:
+                    new_x = self.player_agent.x + dx
+                    new_y = self.player_agent.y + dy
+                    
+                    if 0 <= new_x < 100 and 0 <= new_y < 100:
+                        tile_type, _ = self.world.get_tile(int(new_x), int(new_y))
+                        if tile_type not in ['water', 'mountain']:
+                            self.player_agent.x = new_x
+                            self.player_agent.y = new_y
+                            self.player_agent.sprite.update(1/60, dx*60, dy*60)
+                            
+                            # 添加尘土
+                            self.animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+                            
+    def update(self, dt: float):
+        """更新"""
+        if self.paused:
+            return
+            
+        # 更新时间
+        self.game_time += dt * self.speed / 60  # 1秒 = 1游戏分钟
+        if self.game_time >= 24:
+            self.game_time = 0
+            self.day += 1
+            
+        # 更新相机
+        self.camera.update(self.screen.get_width(), self.screen.get_height())
+        
+        # 更新动画
+        self.animation.update(dt)
+        
+        # 更新AI
+        for agent in self.agents.values():
+            if agent != self.player_agent or not self.player_control:
+                agent.update(dt * self.speed, self.world, self.animation)
+                
+    def render(self):
+        """渲染"""
+        self.screen.fill((20, 25, 20))
+        
+        # 渲染世界
+        self.world.render(self.screen, self.camera, self.animation.time)
+        
+        # 渲染AI
+        for agent in self.agents.values():
+            is_player = (agent == self.player_agent)
+            agent.render(self.screen, self.camera, is_player)
+            
+        # 渲染粒子
+        self.animation.render(self.screen, self.camera.x, self.camera.y, TILE_SIZE)
+        
+        # 日夜效果
+        hour = int(self.game_time)
+        EnvironmentEffects.render_day_night_overlay(self.screen, hour, 0)
+        
+        # HUD
+        game_state = {
+            'player': {
+                'name': self.player_agent.name,
+                'status': '玩家控制' if self.player_control else 'AI自主',
+                'energy': self.player_agent.energy,
+                'mood': self.player_agent.mood,
+                'money': self.player_agent.money,
+            },
+            'year': 1,
+            'season': self.season,
+            'day': self.day,
+            'hour': hour,
+            'minute': int((self.game_time % 1) * 60),
+            'weather': 'Sunny',
+            'goal': self.player_agent.goal,
+            'speed': self.speed,
+            'paused': self.paused,
+            'controls': 'WASD:移动 | F12:上帝 | C:切换控制',
+            'god_mode': self.camera.god_mode,
+            'player_pos': (self.player_agent.x, self.player_agent.y),
+            'world_width': 100,
+            'world_height': 100,
+        }
+        
+        self.hud.render(self.screen, game_state)
+        
+        pygame.display.flip()
+        
+    async def run(self):
+        """主循环"""
+        print("🎮 AnotherYou ECO v0.6 - 专业版")
+        print("=" * 40)
+        print("✨ 特性:")
+        print("  • 32x32像素瓦片地形")
+        print("  • 16x16角色精灵（4方向动画）")
+        print("  • 水波/树摇摆动画")
+        print("  • 走路尘土粒子")
+        print("  • 日夜循环")
+        print("  • 专业HUD界面")
+        print("=" * 40)
+        
         while self.running:
-            # 更新世界
-            self.world.update(self.speed)
+            dt = self.clock.tick(FPS) / 1000.0
             
-            # 每10tick输出状态
-            if tick % 10 == 0:
-                self._print_status()
+            self.handle_input()
+            self.update(dt)
+            self.render()
             
-            tick += 1
+            await asyncio.sleep(0)
             
-            # 控制速度
-            await asyncio.sleep(0.1 / self.speed)
-    
-    def _print_status(self):
-        """打印状态"""
-        print(f"\n📅 Day {self.world.time.day}, {self.world.time.strftime('%H:%M')}")
-        print(f"👥 人口: {len([a for a in self.world.agents.values() if a.alive])}")
-        print(f"🏠 建筑: {len(self.world.buildings)}")
-        print(f"🌾 资源点: {len(self.world.resources)}")
-        
-        print("\nAI状态:")
-        for agent in self.world.agents.values():
-            if agent.alive:
-                status = agent.get_status()
-                print(f"  {status['name']}: {status['action']} | "
-                      f"生存{status['needs']['生存']} | "
-                      f"归属{status['needs']['归属']} | "
-                      f"{'有家' if status['home'] else '无家'} | "
-                      f"{status['friends']}朋友")
+        pygame.quit()
+
+
+# 扩展SpriteSheet支持从surface创建
+@classmethod
+def from_surface(cls, surface: pygame.Surface, tile_width: int, tile_height: int):
+    """从surface创建sprite sheet"""
+    sheet = cls.__new__(cls)
+    sheet.sheet = surface
+    sheet.tile_width = tile_width
+    sheet.tile_height = tile_height
+    sheet.cols = surface.get_width() // tile_width
+    sheet.rows = surface.get_height() // tile_height
+    return sheet
+
+SpriteSheet.from_surface = from_surface
+
+
+async def main():
+    game = Game()
+    await game.run()
 
 
 if __name__ == "__main__":
-    sim = Simulation()
-    asyncio.run(sim.run())
+    asyncio.run(main())
