@@ -1,7 +1,6 @@
 """
-AnotherYou ECO - 主版本
-持续迭代的唯一入口
-当前: v0.6 专业像素版
+AnotherYou ECO - 主版本 v0.6
+AI灵魂版：完全自主 + 无缝切换
 """
 
 import pygame
@@ -16,6 +15,8 @@ sys.path.insert(0, '/root/.openclaw/workspace/another-you-eco')
 from core.sprite_loader import TilesetManager, CharacterSprite, SpriteSheet
 from core.camera import GameCamera
 from core.animation import AnimationManager, EnvironmentEffects
+from core.agent_core import AgentCore
+from core.control_switcher import ControlSwitcher, ControlMode
 from ui.pro_hud import ProfessionalHUD
 
 # 配置
@@ -33,13 +34,10 @@ class WorldMap:
         self.height = height
         self.tiles = []
         self.tileset = TilesetManager(TILE_SIZE)
-        
         self._generate()
         
     def _generate(self):
         """生成地图"""
-        import math
-        
         center_x, center_y = self.width // 2, self.height // 2
         
         for y in range(self.height):
@@ -47,19 +45,14 @@ class WorldMap:
             for x in range(self.width):
                 dist = math.sqrt((x - center_x)**2 + (y - center_y)**2)
                 
-                # 边缘山地
                 if dist > min(self.width, self.height) * 0.42:
                     tile_type = 'mountain'
-                # 河流
                 elif abs(y - center_y) < 4 and random.random() > 0.2:
                     tile_type = 'water'
-                # 湖泊
                 elif dist < 10 and random.random() > 0.4:
                     tile_type = 'water'
-                # 森林群
                 elif random.random() < 0.22:
                     tile_type = 'forest'
-                # 沙滩
                 elif random.random() < 0.08:
                     tile_type = 'sand'
                 else:
@@ -84,29 +77,24 @@ class WorldMap:
         for row in range(start_row, end_row):
             for col in range(start_col, end_col):
                 tile_type, variant = self.tiles[row][col]
-                
                 x = col * TILE_SIZE - int(camera.x)
                 y = row * TILE_SIZE - int(camera.y)
                 
-                # 特殊动画瓦片
                 if tile_type == 'water':
                     EnvironmentEffects.render_water_animation(
-                        screen, x, y, TILE_SIZE, animation_time,
-                        (60, 110, 200)
+                        screen, x, y, TILE_SIZE, animation_time, (60, 110, 200)
                     )
                 elif tile_type == 'forest':
                     EnvironmentEffects.render_tree_sway(
-                        screen, x, y, TILE_SIZE, animation_time,
-                        (40, 100, 50)
+                        screen, x, y, TILE_SIZE, animation_time, (40, 100, 50)
                     )
                 else:
-                    # 普通瓦片
                     tile_image = self.tileset.get_tile(tile_type, variant)
                     screen.blit(tile_image, (x, y))
 
 
 class GameAgent:
-    """游戏AI角色"""
+    """游戏AI角色（集成AgentCore）"""
     
     SHIRT_COLORS = [
         (220, 80, 80), (80, 120, 220), (80, 180, 80),
@@ -116,45 +104,31 @@ class GameAgent:
     def __init__(self, agent_id: str, name: str, x: float, y: float, color_idx: int):
         self.id = agent_id
         self.name = name
-        self.x = x
-        self.y = y
         
-        self.energy = 100.0
-        self.mood = 70.0
-        self.money = random.randint(50, 200)
-        self.alive = True
+        # AI核心大脑
+        self.brain = AgentCore(agent_id, name)
+        self.brain.x = x
+        self.brain.y = y
         
-        # 创建精灵
+        # 控制切换器
+        self.control = ControlSwitcher(self.brain)
+        
+        # 视觉
         self.sprite = self._create_sprite(color_idx)
+        self.color_idx = color_idx
         
-        self.goal = "探索世界"
-        self.action_timer = 0
-        self.move_cooldown = 0
-        
-    def _create_sprite(self, color_idx: int) -> CharacterSprite:
+    def _create_sprite(self, color_idx: int):
         """创建角色精灵"""
-        # 使用程序生成的简单精灵图
-        # 实际项目中应该加载外部sprite sheet
         color = self.SHIRT_COLORS[color_idx % len(self.SHIRT_COLORS)]
-        
-        # 创建临时sprite sheet
-        sheet_size = 64  # 4x4 16x16 sprites
+        sheet_size = 64
         sheet = pygame.Surface((sheet_size, sheet_size), pygame.SRCALPHA)
         
-        # 绘制4方向x4帧的行走动画
         for direction in range(4):
             for frame in range(4):
                 x = frame * 16
                 y = direction * 16
-                
-                # 身体（衣服颜色）
-                body_color = color
-                pygame.draw.rect(sheet, body_color, (x + 4, y + 6, 8, 8))
-                
-                # 头
+                pygame.draw.rect(sheet, color, (x + 4, y + 6, 8, 8))
                 pygame.draw.circle(sheet, (255, 220, 180), (x + 8, y + 5), 3)
-                
-                # 腿（动画）
                 leg_offset = (frame % 2) * 2
                 pygame.draw.rect(sheet, (60, 40, 30), (x + 4 + leg_offset, y + 14, 2, 2))
                 pygame.draw.rect(sheet, (60, 40, 30), (x + 10 - leg_offset, y + 14, 2, 2))
@@ -163,69 +137,88 @@ class GameAgent:
         return CharacterSprite(sprite_sheet, None)
         
     def update(self, dt: float, world_map: WorldMap, animation: AnimationManager):
-        """更新AI"""
-        if not self.alive:
-            return
+        """更新角色"""
+        # 更新控制切换器
+        keys = pygame.key.get_pressed()
+        mouse_buttons = pygame.mouse.get_pressed()
+        mouse_pos = pygame.mouse.get_pos()
+        
+        self.control.update(dt, {
+            'up': keys[pygame.K_w] or keys[pygame.K_UP],
+            'down': keys[pygame.K_s] or keys[pygame.K_DOWN],
+            'left': keys[pygame.K_a] or keys[pygame.K_LEFT],
+            'right': keys[pygame.K_d] or keys[pygame.K_RIGHT],
+            'action': keys[pygame.K_e],
+        }, {
+            'left': mouse_buttons[0],
+            'right': mouse_buttons[2],
+        }, mouse_pos)
+        
+        # 构建世界上下文
+        world_context = {
+            'time': '12:00',
+            'location': (self.brain.x, self.brain.y),
+            'nearby': [],
+            'energy': self.brain.energy,
+            'mood': self.brain.mood,
+            'money': self.brain.money,
+        }
+        
+        if self.control.is_player_control():
+            # 玩家控制模式
+            move_speed = 4 * dt
+            dx, dy = 0, 0
             
-        # 能量消耗
-        self.energy -= 0.03 * dt
-        if self.energy <= 0:
-            self.energy = 0
-            self.alive = False
-            return
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                dy = -move_speed
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                dy = move_speed
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                dx = -move_speed
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                dx = move_speed
+                
+            if dx != 0 or dy != 0:
+                new_x = self.brain.x + dx
+                new_y = self.brain.y + dy
+                
+                if 0 <= new_x < 100 and 0 <= new_y < 100:
+                    tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
+                    if tile_type not in ['water', 'mountain']:
+                        self.brain.x = new_x
+                        self.brain.y = new_y
+                        self.sprite.update(dt, dx*10, dy*10)
+                        
+                        # 添加尘土效果
+                        if random.random() < 0.3:
+                            animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+        else:
+            # AI自主模式
+            result = self.brain.update(dt, world_context)
             
-        # AI决策
-        self.action_timer += dt
-        self.move_cooldown -= dt
-        
-        if self.action_timer > 3.0 and self.move_cooldown <= 0:
-            self.action_timer = 0
-            self._decide_and_move(world_map, animation)
-            
-        # 更新动画
-        self.sprite.update(dt, 0, 0)
-        
-    def _decide_and_move(self, world_map: WorldMap, animation: AnimationManager):
-        """决策并移动"""
-        # 简单AI：随机方向移动
-        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-        dx, dy = random.choice(directions)
-        
-        new_x = self.x + dx
-        new_y = self.y + dy
-        
-        # 检查边界和可行走
-        if 0 <= new_x < world_map.width and 0 <= new_y < world_map.height:
-            tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
-            if tile_type not in ['water', 'mountain']:
-                self.x = new_x
-                self.y = new_y
-                self.move_cooldown = 0.5
+            # 执行AI决定的移动
+            if result['action']['type'] == 'move':
+                move_dx = result['action'].get('dx', 0) * dt * 2
+                move_dy = result['action'].get('dy', 0) * dt * 2
                 
-                # 添加尘土效果
-                screen_x = self.x * TILE_SIZE
-                screen_y = self.y * TILE_SIZE
-                animation.add_dust(screen_x, screen_y)
+                new_x = self.brain.x + move_dx
+                new_y = self.brain.y + move_dy
                 
-                # 更新动画方向
-                if dy < 0:
-                    self.sprite.current_direction = 'up'
-                elif dy > 0:
-                    self.sprite.current_direction = 'down'
-                elif dx < 0:
-                    self.sprite.current_direction = 'left'
-                elif dx > 0:
-                    self.sprite.current_direction = 'right'
-                    
-                self.sprite.is_moving = True
+                if 0 <= new_x < 100 and 0 <= new_y < 100:
+                    tile_type, _ = world_map.get_tile(int(new_x), int(new_y))
+                    if tile_type not in ['water', 'mountain']:
+                        self.brain.x = new_x
+                        self.brain.y = new_y
+                        self.sprite.update(dt, move_dx*10, move_dy*10)
+                        
+                        if random.random() < 0.2:
+                            animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
+            else:
+                self.sprite.update(dt, 0, 0)
                 
-        # 更新目标
-        goals = ["寻找食物", "探索森林", "采集资源", "休息", "社交"]
-        self.goal = random.choice(goals)
-        
     def render(self, screen: pygame.Surface, camera: GameCamera, is_player: bool = False):
         """渲染角色"""
-        sx, sy = camera.world_to_screen(self.x, self.y)
+        sx, sy = camera.world_to_screen(self.brain.x, self.brain.y)
         
         if -50 < sx < screen.get_width() + 50 and -50 < sy < screen.get_height() + 50:
             # 玩家高亮
@@ -241,10 +234,26 @@ class GameAgent:
             name_x = sx - name_text.get_width() // 2
             screen.blit(name_text, (name_x, sy - 28))
             
+            # 思考气泡（AI模式）
+            if not self.control.is_player_control() and is_player:
+                thought = self.brain.thought_bubble
+                if thought and thought != "...":
+                    bubble_font = pygame.font.SysFont('microsoftyahei', 10)
+                    thought_text = bubble_font.render(thought[:20], True, (200, 200, 255))
+                    bubble_x = sx - thought_text.get_width() // 2
+                    bubble_y = sy - 45
+                    
+                    # 气泡背景
+                    bubble_rect = pygame.Rect(bubble_x - 4, bubble_y - 2, 
+                                            thought_text.get_width() + 8, thought_text.get_height() + 4)
+                    pygame.draw.rect(screen, (40, 40, 60, 200), bubble_rect)
+                    pygame.draw.rect(screen, (100, 100, 150), bubble_rect, 1)
+                    screen.blit(thought_text, (bubble_x, bubble_y))
+            
             # 能量条
             bar_w = 30
             bar_h = 4
-            energy_pct = self.energy / 100
+            energy_pct = self.brain.energy / 100
             bar_x = sx - bar_w // 2
             bar_y = sy + 18
             
@@ -259,7 +268,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("AnotherYou ECO v0.6 - 专业版")
+        pygame.display.set_caption("AnotherYou ECO v0.6 - AI灵魂版")
         self.clock = pygame.time.Clock()
         
         # 世界
@@ -267,7 +276,7 @@ class Game:
         
         # AI们
         self.agents: Dict[str, GameAgent] = {}
-        for i in range(20):
+        for i in range(15):
             agent = GameAgent(
                 f"agent_{i}", f"AI-{i}",
                 random.randint(40, 60), random.randint(40, 60), i
@@ -276,7 +285,6 @@ class Game:
             
         # 玩家
         self.player_agent = list(self.agents.values())[0]
-        self.player_control = False
         
         # 系统
         self.camera = GameCamera(100, 100, TILE_SIZE)
@@ -285,7 +293,7 @@ class Game:
         self.hud = ProfessionalHUD(SCREEN_WIDTH, SCREEN_HEIGHT)
         
         # 时间
-        self.game_time = 0  # 游戏内时间（小时）
+        self.game_time = 0
         self.day = 1
         self.season = 'Spring'
         
@@ -294,25 +302,34 @@ class Game:
         self.speed = 1
         self.running = True
         
+        # 每日反思计时
+        self.last_reflection_day = 0
+        
     def handle_input(self):
         """处理输入"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
                 
+            # 先给玩家角色处理事件
+            if self.player_agent.control.handle_input(event):
+                continue
+                
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F12:
                     self.camera.toggle_god_mode()
                 elif event.key == pygame.K_SPACE:
-                    self.paused = not self.paused
+                    # 空格键切换控制
+                    if self.player_agent.control.mode == ControlMode.AI_MODE:
+                        self.player_agent.control.switch_to_player()
+                    else:
+                        self.player_agent.control.switch_to_ai()
                 elif event.key == pygame.K_1:
                     self.speed = 1
                 elif event.key == pygame.K_2:
                     self.speed = 2
                 elif event.key == pygame.K_3:
                     self.speed = 5
-                elif event.key == pygame.K_c:
-                    self.player_control = not self.player_control
                     
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 4:
@@ -320,11 +337,9 @@ class Game:
                 elif event.button == 5:
                     self.camera.zoom_out()
                     
-        # 持续按键
+        # 上帝模式相机移动
         keys = pygame.key.get_pressed()
-        
         if self.camera.god_mode:
-            # 上帝模式移动相机
             speed = 15
             if keys[pygame.K_w] or keys[pygame.K_UP]:
                 self.camera.move(0, -speed)
@@ -334,46 +349,24 @@ class Game:
                 self.camera.move(-speed, 0)
             if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
                 self.camera.move(speed, 0)
-        else:
-            # 玩家模式
-            if self.player_control:
-                move_speed = 4 * (1/60)
-                dx, dy = 0, 0
                 
-                if keys[pygame.K_w] or keys[pygame.K_UP]:
-                    dy = -move_speed
-                if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                    dy = move_speed
-                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-                    dx = -move_speed
-                if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-                    dx = move_speed
-                    
-                if dx != 0 or dy != 0:
-                    new_x = self.player_agent.x + dx
-                    new_y = self.player_agent.y + dy
-                    
-                    if 0 <= new_x < 100 and 0 <= new_y < 100:
-                        tile_type, _ = self.world.get_tile(int(new_x), int(new_y))
-                        if tile_type not in ['water', 'mountain']:
-                            self.player_agent.x = new_x
-                            self.player_agent.y = new_y
-                            self.player_agent.sprite.update(1/60, dx*60, dy*60)
-                            
-                            # 添加尘土
-                            self.animation.add_dust(new_x * TILE_SIZE, new_y * TILE_SIZE)
-                            
     def update(self, dt: float):
         """更新"""
         if self.paused:
             return
             
         # 更新时间
-        self.game_time += dt * self.speed / 60  # 1秒 = 1游戏分钟
+        self.game_time += dt * self.speed / 60
         if self.game_time >= 24:
             self.game_time = 0
             self.day += 1
             
+        # 每日反思
+        if self.day != self.last_reflection_day:
+            self.last_reflection_day = self.day
+            for agent in self.agents.values():
+                agent.brain.daily_reflection()
+                
         # 更新相机
         self.camera.update(self.screen.get_width(), self.screen.get_height())
         
@@ -382,9 +375,8 @@ class Game:
         
         # 更新AI
         for agent in self.agents.values():
-            if agent != self.player_agent or not self.player_control:
-                agent.update(dt * self.speed, self.world, self.animation)
-                
+            agent.update(dt * self.speed, self.world, self.animation)
+            
     def render(self):
         """渲染"""
         self.screen.fill((20, 25, 20))
@@ -408,10 +400,10 @@ class Game:
         game_state = {
             'player': {
                 'name': self.player_agent.name,
-                'status': '玩家控制' if self.player_control else 'AI自主',
-                'energy': self.player_agent.energy,
-                'mood': self.player_agent.mood,
-                'money': self.player_agent.money,
+                'status': self.player_agent.control.get_mode_display(),
+                'energy': self.player_agent.brain.energy,
+                'mood': self.player_agent.brain.mood,
+                'money': self.player_agent.brain.money,
             },
             'year': 1,
             'season': self.season,
@@ -419,12 +411,12 @@ class Game:
             'hour': hour,
             'minute': int((self.game_time % 1) * 60),
             'weather': 'Sunny',
-            'goal': self.player_agent.goal,
+            'goal': self.player_agent.brain.planner.current_goal or "探索世界",
             'speed': self.speed,
             'paused': self.paused,
-            'controls': 'WASD:移动 | F12:上帝 | C:切换控制',
+            'controls': 'WASD:移动 | 空格:切换AI/玩家 | F12:上帝模式',
             'god_mode': self.camera.god_mode,
-            'player_pos': (self.player_agent.x, self.player_agent.y),
+            'player_pos': (self.player_agent.brain.x, self.player_agent.brain.y),
             'world_width': 100,
             'world_height': 100,
         }
@@ -435,16 +427,21 @@ class Game:
         
     async def run(self):
         """主循环"""
-        print("🎮 AnotherYou ECO v0.6 - 专业版")
-        print("=" * 40)
-        print("✨ 特性:")
-        print("  • 32x32像素瓦片地形")
-        print("  • 16x16角色精灵（4方向动画）")
-        print("  • 水波/树摇摆动画")
-        print("  • 走路尘土粒子")
-        print("  • 日夜循环")
-        print("  • 专业HUD界面")
-        print("=" * 40)
+        print("🎮 AnotherYou ECO v0.6 - AI灵魂版")
+        print("=" * 50)
+        print("✨ 核心特性:")
+        print("  • 完全自主AI（ReAct循环）")
+        print("  • 记忆系统（长期保存）")
+        print("  • 技能学习（终身成长）")
+        print("  • 空格键切换玩家/AI控制")
+        print("  • 每日自动反思")
+        print("=" * 50)
+        print("控制:")
+        print("  空格 - 切换玩家控制/AI自主")
+        print("  WASD - 移动")
+        print("  F12  - 上帝模式")
+        print("  ESC  - 释放控制（切回AI）")
+        print("=" * 50)
         
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
@@ -458,10 +455,9 @@ class Game:
         pygame.quit()
 
 
-# 扩展SpriteSheet支持从surface创建
+# 扩展SpriteSheet
 @classmethod
 def from_surface(cls, surface: pygame.Surface, tile_width: int, tile_height: int):
-    """从surface创建sprite sheet"""
     sheet = cls.__new__(cls)
     sheet.sheet = surface
     sheet.tile_width = tile_width
