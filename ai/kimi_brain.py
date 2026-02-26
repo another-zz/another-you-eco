@@ -1,6 +1,6 @@
 """
 Kimi Brain - 接入月之暗面 Kimi Coding API
-让 AI 使用国产大模型思考决策
+修复代理和兼容性问题
 """
 
 import os
@@ -8,6 +8,7 @@ import json
 import asyncio
 from typing import Dict, List, Optional
 from datetime import datetime
+import aiohttp
 
 class KimiBrain:
     """Kimi Coding AI 大脑"""
@@ -19,35 +20,43 @@ class KimiBrain:
         # Kimi API 配置
         self.api_key = os.getenv('KIMI_API_KEY', 'sk-kimi-2ntHyfQuoYBjZCVVOggMDOzbDGA7pYcH8pJZDTpYUNGMpSf8VMKOYDq8npxqXtet')
         self.base_url = "https://api.moonshot.cn/v1"
-        self.model = "kimi-coding"  # 使用 Kimi Coding 模型
+        self.model = "kimi-coding"
         
         self.enabled = bool(self.api_key)
-        self.client = None
+        self.session = None
+        
+        # 禁用代理
+        os.environ['HTTP_PROXY'] = ''
+        os.environ['HTTPS_PROXY'] = ''
+        os.environ['http_proxy'] = ''
+        os.environ['https_proxy'] = ''
         
         if self.enabled:
-            try:
-                from openai import AsyncOpenAI
-                self.client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    base_url=self.base_url
-                )
-                print(f"🌙 {agent_id} Kimi大脑已激活")
-            except Exception as e:
-                print(f"⚠️ Kimi初始化失败: {e}")
-                self.enabled = False
+            print(f"🌙 {agent_id} Kimi大脑已激活")
         
-        # 对话历史（用于上下文）
+        # 对话历史
         self.conversation_history = []
+        
+    async def _get_session(self):
+        """获取aiohttp会话（无代理）"""
+        if self.session is None or self.session.closed:
+            # 明确禁用代理
+            connector = aiohttp.TCPConnector(ssl=False)
+            self.session = aiohttp.ClientSession(
+                connector=connector,
+                trust_env=False  # 不信任环境代理设置
+            )
+        return self.session
         
     async def think(self, context: Dict) -> Dict:
         """AI思考决策"""
-        if not self.enabled or not self.client:
+        if not self.enabled:
             return self._local_decision(context)
         
         try:
             return await self._kimi_decision(context)
         except Exception as e:
-            print(f"Kimi决策失败: {e}, 使用本地规则")
+            print(f"Kimi决策失败: {e}")
             return self._local_decision(context)
     
     async def _kimi_decision(self, context: Dict) -> Dict:
@@ -73,40 +82,49 @@ class KimiBrain:
 
         user_prompt = self._build_state_prompt(context)
         
-        # 调用 Kimi API
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        # 使用aiohttp直接调用API（避免httpx代理问题）
+        session = await self._get_session()
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.8,
-            max_tokens=500
-        )
+            "temperature": 0.8,
+            "max_tokens": 500
+        }
         
-        # 解析响应
-        content = response.choices[0].message.content
-        
-        # 尝试解析JSON
         try:
-            # 查找JSON部分
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                json_str = content.split("```")[1].split("```")[0]
-            else:
-                json_str = content
+            async with session.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    print(f"API错误: {response.status} - {text[:200]}")
+                    return self._local_decision(context)
                 
-            result = json.loads(json_str.strip())
-        except:
-            # 如果不是JSON，解析文本
-            result = self._parse_text_response(content)
-        
-        decision = self._validate_decision(result, context)
-        
-        print(f"🌙 {self.agent_id}: {decision.get('reasoning', '思考中...')[:50]}")
-        
-        return decision
+                data = await response.json()
+                content = data['choices'][0]['message']['content']
+                
+                # 解析响应
+                result = self._parse_response(content)
+                decision = self._validate_decision(result, context)
+                
+                print(f"🌙 {self.agent_id}: {decision.get('reasoning', '思考中...')[:40]}")
+                
+                return decision
+                
+        except Exception as e:
+            print(f"API调用失败: {e}")
+            return self._local_decision(context)
     
     def _build_state_prompt(self, context: Dict) -> str:
         """构建状态提示"""
@@ -127,8 +145,6 @@ class KimiBrain:
             desc = f"- {obj_type} 在{direction}方向{distance}格"
             if 'edible' in props:
                 desc += f" (可食用)"
-            if 'material' in props:
-                desc += f" (材料:{props['material']})"
             objects_desc.append(desc)
         
         # 可见AI
@@ -136,8 +152,6 @@ class KimiBrain:
         agents_desc = []
         for agent in agents[:3]:
             desc = f"- AI {agent.get('id', '?')[:8]} 在{agent.get('direction', '?')}方向"
-            if agent.get('action'):
-                desc += f" 正在{agent['action']}"
             agents_desc.append(desc)
         
         # 已发现的行为
@@ -171,18 +185,32 @@ class KimiBrain:
 
         return prompt
     
+    def _parse_response(self, content: str) -> Dict:
+        """解析响应"""
+        try:
+            # 查找JSON部分
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                json_str = content.split("```")[1].split("```")[0]
+            else:
+                json_str = content
+                
+            return json.loads(json_str.strip())
+        except:
+            # 文本解析
+            return self._parse_text_response(content)
+    
     def _parse_text_response(self, content: str) -> Dict:
         """解析文本响应"""
         content_lower = content.lower()
         
-        # 提取行动
         action = "wait"
         if "移动" in content or "走" in content or "move" in content_lower:
             action = "move"
         elif "互动" in content or "交互" in content or "interact" in content_lower:
             action = "interact"
             
-        # 提取方向
         direction = "N"
         if "北" in content or "north" in content_lower:
             direction = "N"
@@ -196,7 +224,7 @@ class KimiBrain:
         return {
             "action": action,
             "direction": direction,
-            "reasoning": content[:100],
+            "reasoning": content[:80],
             "expected_outcome": "未知"
         }
     
@@ -268,17 +296,32 @@ class KimiBrain:
         try:
             energy = context.get('self', {}).get('energy', 50)
             
-            prompt = f"""你当前能量{energy:.0f}。
-用10个字以内表达你现在的想法或感受："""
-
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.9,
-                max_tokens=20
-            )
+            session = await self._get_session()
             
-            return response.choices[0].message.content.strip('"').strip()
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
             
+            prompt = f"你当前能量{energy:.0f}。用10个字以内表达你现在的想法："
+            
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.9,
+                "max_tokens": 20
+            }
+            
+            async with session.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content'].strip('"').strip()
+                    
         except:
-            return "..."
+            pass
+            
+        return "..."
