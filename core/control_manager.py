@@ -65,10 +65,10 @@ class ControlManager:
         # 检查是否有输入
         has_input = False
         move_keys = {
-            'up': keys.get(pygame.K_w) or keys.get(pygame.K_UP),
-            'down': keys.get(pygame.K_s) or keys.get(pygame.K_DOWN),
-            'left': keys.get(pygame.K_a) or keys.get(pygame.K_LEFT),
-            'right': keys.get(pygame.K_d) or keys.get(pygame.K_RIGHT),
+            'up': keys[pygame.K_w] or keys[pygame.K_UP],
+            'down': keys[pygame.K_s] or keys[pygame.K_DOWN],
+            'left': keys[pygame.K_a] or keys[pygame.K_LEFT],
+            'right': keys[pygame.K_d] or keys[pygame.K_RIGHT],
         }
         
         if any(move_keys.values()):
