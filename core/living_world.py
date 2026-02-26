@@ -467,6 +467,8 @@ class TerrainCell:
 
 # ============ 增强版AI ============
 
+from ai.kimi_brain import KimiBrain
+
 @dataclass
 class LivingAgent:
     """活的世界中的AI"""
@@ -503,9 +505,16 @@ class LivingAgent:
         'caution': 0.5,
     }
     
+    # Kimi大脑（国产AI）
+    brain: Optional[KimiBrain] = None
+    thought: str = "..."
+    
     def __post_init__(self):
         if not self.memory.agent_id:
             self.memory.agent_id = self.id
+        # 初始化Kimi大脑
+        if self.brain is None:
+            self.brain = KimiBrain(self.id, self.traits)
             
     def update(self, world: 'LivingWorld'):
         """AI更新"""
